@@ -1,7 +1,7 @@
 //! What opens from the call's controls, above the control: the device menus
-//! (with the microphone's level and noise suppression), the share menu
-//! (with a setting's choices beside it), the soundboard; and someone's
-//! voice menu, their volumes over their rows.
+//! (with the microphone's level and noise suppression), the bitrate menu,
+//! the share menu (with a setting's choices beside it), the soundboard; and
+//! someone's voice menu, their volumes over their rows.
 
 use std::borrow::Cow;
 
@@ -19,6 +19,7 @@ use crate::{
     widgets::{Anchor, Place},
 };
 
+pub mod bitrate;
 pub mod device;
 pub mod person;
 pub mod share;
@@ -80,6 +81,7 @@ pub(super) fn open_popup(app: &mut App, popup: Popup) -> Task<Message> {
             crate::call::details::read_link(app);
             return Task::none();
         }
+        Popup::Bitrate => app.call.popup = Some(popup),
     }
     Task::batch([app.sync(), operation::focus(NOBODY)])
 }
@@ -131,6 +133,10 @@ pub fn call_popup_view<'a>(
         Popup::Soundboard => (
             crate::call::popups::soundboard::soundboard(ctx),
             SOUNDBOARD_WIDTH,
+        ),
+        Popup::Bitrate => (
+            crate::call::popups::bitrate::bitrate_menu(ctx),
+            DEVICE_WIDTH,
         ),
         // Under its signal, or above it without room.
         Popup::Link => {

@@ -35,7 +35,8 @@ recording. Each change is kept at once in
   preview, filmed only while Test video
   is on (`camera:settings` among the window's video sources, at 400 by
   225); then joining unmuted, evening out the voice, and in Discord calls
-  noise suppression and its strength, the soundboard's volume (Discord
+  noise suppression and its strength, sending the microphone in stereo and
+  its bit rate (as the account card's bitrate menu has them), the soundboard's volume (Discord
   keeps it; the slider follows a drag and what it's left at is sent), the entrance sound for every server or one (Choose, with
   Nitro, opens the sounds Discord has as the call's soundboard does,
   `soundboard::sound_board`, a click choosing one), the room's echo and, on Windows,

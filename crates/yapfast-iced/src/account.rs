@@ -477,6 +477,22 @@ pub fn view<'a>(ctx: crate::ctx::Ctx<'a>) -> Element<'a, Message> {
     ]
     .spacing(5)
     .align_y(Alignment::Center);
+    // With Discord, the microphone's bit rate and stereo: its menu opens
+    // above it, as the devices' do.
+    let controls = if ctx.state.discord_user.is_some() {
+        controls.push(ctx.spot(tinted_button(
+            ctx,
+            Icon::Bitrate,
+            "Voice bitrate",
+            theme.text,
+            20,
+            Some(Message::Call(crate::call::Event::Open(
+                crate::call::Popup::Bitrate,
+            ))),
+        )))
+    } else {
+        controls
+    };
     // Offline, Reconnect before Settings.
     let state = ctx.state;
     let controls = if !state.preview && !state.online {

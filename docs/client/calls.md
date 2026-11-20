@@ -43,6 +43,11 @@ The call's views and what they do are in `call/`.
 - The controls under the stage, in this order: mute and
   deafen (each with its device menu), the camera, Go Live, the soundboard,
   and leave.
+- The account card's bitrate button, beside mute and deafen with Discord
+  linked, opens the bitrate menu (`call/popups/bitrate.rs`) above it: Mono
+  or Stereo for Discord calls, the microphone's bit rate from 8 to 510
+  kbit/s, which a call takes up as it's dragged and `layout.json` keeps
+  when let go, and Voice Settings.
 - The device menus (`call/popups/`: the device menus, the share menu,
   the soundboard and someone's voice menu each a file): the device to use (one chosen that
   went away shows as not connected), its volume, which plays while it's

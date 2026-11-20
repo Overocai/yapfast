@@ -125,6 +125,9 @@ pub enum Popup {
     Soundboard,
     /// The connection's details, from the signal.
     Link,
+    /// The microphone in stereo and its bit rate, from the account panel's
+    /// button.
+    Bitrate,
 }
 
 /// What's done to the call, or in it.
@@ -160,6 +163,10 @@ pub enum Event {
     /// whether it's the drag's last.
     DeviceVolume(bool, u32, bool),
     Suppressor(yapfast_core::noise::Suppressor),
+    /// The bitrate menu's: the microphone in stereo or not, and its bit
+    /// rate in kbit/s with whether it's the drag's last.
+    Stereo(bool),
+    Bitrate(u32, bool),
     /// A soundboard sound played for everyone, heard here first, or starred.
     Play(String),
     Preview(String),
@@ -296,6 +303,14 @@ pub fn update(app: &mut App, event: Event) -> Task<Message> {
         }
         Event::Suppressor(suppressor) => {
             choose_suppressor(app, suppressor);
+            return Task::none();
+        }
+        Event::Stereo(on) => {
+            crate::call::popups::bitrate::set_stereo(app, on);
+            return Task::none();
+        }
+        Event::Bitrate(value, done) => {
+            crate::call::popups::bitrate::set_bitrate(app, value, done);
             return Task::none();
         }
         Event::Play(sound) => Action::Voice(Command::Soundboard(sound)),

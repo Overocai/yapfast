@@ -84,6 +84,10 @@ pub enum Event {
     LevelVoice(bool),
     Dereverb(bool),
     WindowsEffects(bool),
+    /// The microphone in stereo, and its bit rate in kbit/s with whether
+    /// it's the drag's last.
+    Stereo(bool),
+    Bitrate(u32, bool),
     Noise(usize),
     Strength(usize),
     InputMode(usize),
@@ -272,6 +276,21 @@ impl Settings {
                 voice.windows_microphone_effects = on;
                 yapfast_core::set_windows_effects(on);
                 crate::layout::store(&root, "windows_microphone_effects", on);
+            }
+            Event::Stereo(on) => {
+                voice.stereo_microphone = on;
+                yapfast_core::discord_audio::set_stereo(on);
+                crate::layout::store(&root, "stereo_microphone", on);
+            }
+            Event::Bitrate(value, done) => {
+                use yapfast_core::discord_audio::{LEAST_BITRATE, MOST_BITRATE};
+                let kbps = value.clamp(LEAST_BITRATE, MOST_BITRATE);
+                voice.voice_bitrate = Some(kbps);
+                yapfast_core::discord_audio::set_bitrate(kbps);
+                if done {
+                    crate::layout::store(&root, "voice_bitrate", kbps);
+                }
+                return;
             }
             Event::Noise(index) => {
                 let suppressor = SUPPRESSORS[index.min(2)];
@@ -587,6 +606,37 @@ impl<'a> Page<'a> {
                 ),
             ]));
         }
+        let stereo = voice.stereo_microphone;
+        parts.push(
+            switch(
+                "Send your microphone in stereo in Discord calls",
+                stereo,
+                Some(voice_message(Event::Stereo(!stereo))),
+            )
+            .description("For a stereo microphone, an instrument or a mixer such as Voicemeeter: both channels go out as your microphone hears them, at its volume. Noise suppression and echo cancellation still decide when your voice is sent, but don't change what's sent, so wear headphones. A call going on switches straight away.")
+            .view(self.cx.look),
+        );
+        let bitrate = voice
+            .voice_bitrate
+            .unwrap_or(yapfast_core::discord_audio::DEFAULT_BITRATE);
+        parts.push(form::group([
+            form::heading(theme, "VOICE BITRATE IN DISCORD CALLS"),
+            slider(
+                "Voice bitrate",
+                bitrate,
+                yapfast_core::discord_audio::MOST_BITRATE,
+                |value| voice_message(Event::Bitrate(value, false)),
+            )
+            .mark(false)
+            .step(1)
+            .shown(format!("{bitrate} kbps"))
+            .on_release(voice_message(Event::Bitrate(bitrate, true)))
+            .view(theme),
+            form::note(
+                theme,
+                "How much of your microphone goes out each second. 128 kbps is plenty for a voice; music in stereo sounds best higher, up to 510. A call going on changes straight away.",
+            ),
+        ]));
         let state = self.cx.state;
         let board = settings.voice.soundboard.unwrap_or_else(|| {
             yapfast_core::volume::to_slider(state.soundboard_volume / 100.0)

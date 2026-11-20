@@ -102,6 +102,16 @@ impl Encoder {
         Ok(encoder)
     }
 
+    /// Aims for `bitrate` bits a second from the next frame on.
+    pub fn set_bitrate(&mut self, bitrate: i32) -> Result<()> {
+        // SAFETY: a request that takes one int, as libopus's macros pass it.
+        let result = unsafe { opus_encoder_ctl(self.raw.as_ptr(), SET_BITRATE, bitrate as c_int) };
+        if result < 0 {
+            bail!("Opus couldn't change its bit rate ({result})");
+        }
+        Ok(())
+    }
+
     /// Encodes one frame of interleaved samples into `out`, returning the
     /// packet's length.
     pub fn encode_float(&mut self, pcm: &[f32], out: &mut [u8]) -> Result<usize> {

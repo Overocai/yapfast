@@ -3,7 +3,9 @@
 //! itself, through [`crate::audio_io`]. The microphone goes through WebRTC's
 //! echo cancellation, DeepFilterNet's noise suppression (or RNNoise's), WebRTC's
 //! gain control, Yapfast's leveling and the microphone's volume, and a gate
-//! that speech opens.
+//! that speech opens. In stereo, if asked, the processing hears the two
+//! channels' mix only to open the gate, and what the gate lets through goes
+//! out in both channels as the microphone heard it, at its volume.
 use std::{
     collections::{HashMap, VecDeque},
     sync::{
@@ -27,6 +29,26 @@ use crate::{
 
 /// Whether Discord voice has audio on this platform yet.
 pub const AVAILABLE: bool = crate::audio_io::AVAILABLE;
+
+/// The microphone's bit rate in Discord calls, in kbit/s, which a call
+/// takes up from its next frame.
+pub use yapfast_discord::voice::{
+    DEFAULT_BITRATE, LEAST_BITRATE, MOST_BITRATE, bitrate, set_bitrate,
+};
+
+/// Whether Discord calls open the microphone in stereo, as Settings' switch
+/// says; off unless turned on.
+static STEREO: AtomicBool = AtomicBool::new(false);
+
+/// Discord calls open the microphone in stereo, or in mono, from their next
+/// pair of blocks.
+pub fn set_stereo(on: bool) {
+    STEREO.store(on, Ordering::Relaxed);
+}
+
+pub fn stereo() -> bool {
+    STEREO.load(Ordering::Relaxed)
+}
 
 /// Someone counts as speaking for this long after their last loud frame.
 const SPEAKING_HOLD: Duration = Duration::from_millis(300);
@@ -563,6 +585,11 @@ const ECHO_DELAY_MS: i32 = 60;
 /// frames too.
 const BLOCK: usize = SAMPLE_RATE as usize / 100;
 const _: () = assert!(BLOCK == crate::noise::BLOCK);
+/// A block of a stereo microphone, interleaved.
+const WIDE: usize = BLOCK * 2;
+/// The blocks of a stereo microphone kept as read: those the gate keeps
+/// from before it opens, and a pair.
+const WIDE_KEPT: usize = BEFORE_OPENING + PAIR;
 /// How long a block of the microphone lasts.
 const BLOCK_TIME: Duration = Duration::from_millis(10);
 /// The microphone has fallen behind once this much waits to be processed:
@@ -856,6 +883,66 @@ impl Processing {
     }
 }
 
+/// A stereo microphone's last blocks as read. The processing and the gate
+/// hear the two channels' mix, block by block as in mono; what the gate lets
+/// through goes out as these blocks, both channels as the microphone heard
+/// them, at the microphone's volume.
+struct Wide {
+    /// Oldest first, up to [`WIDE_KEPT`]: the pair just read last.
+    blocks: VecDeque<[i16; WIDE]>,
+    /// A block made ready to send, as f32 in full scale.
+    out: [f32; WIDE],
+}
+
+impl Wide {
+    fn new() -> Self {
+        Self {
+            blocks: VecDeque::with_capacity(WIDE_KEPT),
+            out: [0.0; WIDE],
+        }
+    }
+
+    /// Reads the next block from `stream`, and leaves the mix of its two
+    /// channels in `mono` for the processing.
+    fn read(&mut self, stream: &mut LastingInput<i16>, mono: &mut [i16; BLOCK]) {
+        if self.blocks.len() == WIDE_KEPT {
+            self.blocks.pop_front();
+        }
+        let mut block = [0i16; WIDE];
+        stream.read(&mut block);
+        mix_down(&block, mono);
+        self.blocks.push_back(block);
+    }
+
+    /// Sends what the gate let through of the pair just read, at `volume`:
+    /// for each of its blocks, `sent_by` many ending with it, that block
+    /// alone while the gate is open and, as it opens, those kept from before
+    /// it too.
+    fn send(&mut self, sent_by: [usize; PAIR], volume: f32, mut out: impl FnMut(&[f32])) {
+        let read = self.blocks.len();
+        for (index, count) in sent_by.into_iter().enumerate() {
+            let end = (read + index + 1).saturating_sub(PAIR);
+            for block in self.blocks.range(end.saturating_sub(count)..end) {
+                for (value, sample) in self.out.iter_mut().zip(block) {
+                    *value = (f32::from(*sample) / 32768.0 * volume).clamp(-1.0, 1.0);
+                }
+                out(&self.out);
+            }
+        }
+    }
+
+    fn clear(&mut self) {
+        self.blocks.clear();
+    }
+}
+
+/// The mix of an interleaved stereo block's two channels.
+fn mix_down(stereo: &[i16; WIDE], mono: &mut [i16; BLOCK]) {
+    for (mixed, frame) in mono.iter_mut().zip(stereo.as_chunks::<2>().0) {
+        *mixed = ((i32::from(frame[0]) + i32::from(frame[1])) / 2) as i16;
+    }
+}
+
 /// Runs the microphone through a call's processing for [`GateMeter`]
 /// until it stops. The level falls 90 dB a second, as the input menu's
 /// does, and rises at once.
@@ -867,7 +954,9 @@ fn measure(
     if playback.is_some() {
         crate::audio_io::raise_capture_priority();
     }
-    let mut stream = open_microphone(microphone)?;
+    // In mono even for a stereo call, whose gate hears the channels' mix
+    // as the system's mono is.
+    let mut stream = open_microphone(microphone, false)?;
     let mut processing = Processing::new(None);
     processing.preview = playback.is_some();
     let mut blocks = [[0i16; BLOCK]; PAIR];
@@ -943,7 +1032,8 @@ impl CaptureRequest {
     /// chosen, and returns the one it used, or `denoiser` if the microphone
     /// didn't open.
     fn run(self, denoiser: Option<Denoiser>) -> Option<Denoiser> {
-        let mut stream = match open_microphone(self.microphone.as_deref()) {
+        let mut stereo = stereo();
+        let mut stream = match open_microphone(self.microphone.as_deref(), stereo) {
             Ok(stream) => {
                 let _ = self.opened.send(Ok(()));
                 stream
@@ -953,6 +1043,10 @@ impl CaptureRequest {
                 return denoiser;
             }
         };
+        self.out.set_channels(if stereo { 2 } else { 1 });
+        // The way the switch asks for that wouldn't open, not tried again
+        // until it changes.
+        let mut refused = None;
         // The modules aren't Send, so they live on this thread.
         let mut processing = Processing::new(denoiser);
         let reverse = self.reverse.lock().unwrap();
@@ -961,14 +1055,38 @@ impl CaptureRequest {
             recycle(played);
         }
         let mut blocks = [[0i16; BLOCK]; PAIR];
+        let mut wide = Wide::new();
         let mut pace = Pace::default();
         let mut lightly = false;
         while !self.stop.load(Ordering::Relaxed) {
+            // Settings' switch opens the microphone again the other way.
+            let wanted = self::stereo();
+            if wanted == stereo {
+                refused = None;
+            } else if refused != Some(wanted) {
+                match open_microphone(self.microphone.as_deref(), wanted) {
+                    Ok(opened) => {
+                        stream = opened;
+                        stereo = wanted;
+                        wide.clear();
+                        self.out.set_channels(if stereo { 2 } else { 1 });
+                        tracing::info!(stereo, "the Discord microphone opens again");
+                    }
+                    Err(error) => {
+                        tracing::warn!(%error, stereo = wanted, "the Discord microphone wouldn't open again");
+                        refused = Some(wanted);
+                    }
+                }
+            }
             // Each block's read, and the time after it until the next read.
             let mut times = [(Duration::ZERO, Instant::now()); PAIR];
             for (block, time) in blocks.iter_mut().zip(&mut times) {
                 let reading = Instant::now();
-                stream.read(block);
+                if stereo {
+                    wide.read(&mut stream, block);
+                } else {
+                    stream.read(block);
+                }
                 let read = Instant::now();
                 while let Ok(mut played) = reverse.try_recv() {
                     processing.played(&mut played);
@@ -990,8 +1108,13 @@ impl CaptureRequest {
                     self.track.pause()
                 };
             }
-            for samples in sent {
-                self.out.push(samples);
+            if stereo {
+                let volume = crate::volume::microphone();
+                wide.send(processing.sent_by, volume, |samples| self.out.push(samples));
+            } else {
+                for samples in sent {
+                    self.out.push(samples);
+                }
             }
             let [(first_read, first), (second_read, second)] = times;
             pace.note(first_read, second - first - second_read);
@@ -1145,14 +1268,14 @@ fn processes_a_recording() {
     }
 }
 
-/// Opens the microphone, mono in 10 ms blocks, to open again if it goes
-/// away and comes back.
-fn open_microphone(microphone: Option<&str>) -> Result<LastingInput<i16>> {
+/// Opens the microphone, mono or interleaved stereo in 10 ms blocks, to
+/// open again if it goes away and comes back.
+fn open_microphone(microphone: Option<&str>, stereo: bool) -> Result<LastingInput<i16>> {
     LastingInput::open(
         microphone,
         "Discord microphone",
         SAMPLE_RATE,
-        1,
+        if stereo { 2 } else { 1 },
         Duration::from_millis(10),
     )
 }
@@ -1160,6 +1283,38 @@ fn open_microphone(microphone: Option<&str>) -> Result<LastingInput<i16>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_stereo_block_mixes_down_to_its_channels_average() {
+        let mut stereo = [0i16; WIDE];
+        stereo[..6].copy_from_slice(&[1000, 3000, i16::MAX, i16::MAX, i16::MIN, i16::MAX]);
+        let mut mono = [1i16; BLOCK];
+        mix_down(&stereo, &mut mono);
+        assert_eq!(&mono[..3], &[2000, i16::MAX, 0]);
+        assert_eq!(mono[BLOCK - 1], 0);
+    }
+
+    #[test]
+    fn a_stereo_gate_sends_the_blocks_it_let_through_as_read() {
+        let mut wide = Wide::new();
+        for at in 0..WIDE_KEPT {
+            wide.blocks.push_back([at as i16; WIDE]);
+        }
+        let mut sent = Vec::new();
+        wide.send([0, 0], 1.0, |samples| sent.push(samples[0]));
+        assert!(sent.is_empty(), "a shut gate sends nothing");
+        // The pair's first block opens the gate, with those kept from
+        // before it; the second goes on.
+        wide.send([BEFORE_OPENING + 1, 1], 1.0, |samples| {
+            assert_eq!(samples.len(), WIDE);
+            sent.push(samples[0] * 32768.0);
+        });
+        let read: Vec<f32> = (0..WIDE_KEPT).map(|at| at as f32).collect();
+        assert_eq!(sent, read, "oldest first, each block once");
+        sent.clear();
+        wide.send([1, 1], 0.5, |samples| sent.push(samples[1] * 32768.0));
+        assert_eq!(sent, [5.0, 5.5], "at the microphone's volume");
+    }
 
     #[test]
     fn mixing_adds_voices_and_clips() {
