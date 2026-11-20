@@ -1,0 +1,64 @@
+# Builds this branch's Windows ZIP on every push to it, as nightly.yml's
+# windows job does, without its release or signing: the ZIP is the run's
+# artifact (Actions > the run > Artifacts > windows). Beside it, the unit
+# tests of the code the branch changes run on Linux.
+name: Stereo build
+
+on:
+  push:
+    branches: [feat/stereo-microphone]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stereo-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+      - uses: actions/checkout@v5
+      - uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ github.token }}
+      # The MSVC CRT and Windows SDK cargo-xwin downloads.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/cargo-xwin
+          key: windows-xwin-${{ hashFiles('nix/flake.lock') }}
+      # Before scripts/set-version, which changes Cargo.lock, so the key
+      # changes only with the dependencies.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      # Above 0.4.1, so the updater offers only a newer stable release.
+      - run: scripts/set-version "0.5.0-stereo.${{ github.run_number }}"
+      - run: nix develop path:./nix#windows --command scripts/build-windows discord --no-installer
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: target/dist/discord/Yapfast-*
+          if-no-files-found: error
+          compression-level: 0
+
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+      - uses: actions/checkout@v5
+      - uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ github.token }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - name: The microphone's queue, the call's frames and the stereo capture
+        run: |
+          nix develop path:./nix --command cargo test --locked --profile fast -p yapfast-discord --lib -- voice::tests:: call_connection::tests::
+          nix develop path:./nix --command cargo test --locked --profile fast -p yapfast-core --lib -- discord_audio::tests::
