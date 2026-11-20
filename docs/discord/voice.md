@@ -206,9 +206,11 @@ connection carrying video with DAVE. It also leaves one libopus, libwebrtc's.
 `yapfast_core` drives a call through `Call`, `Microphone`, `Track` and
 `Listener`, and the fake voice server exchanges audio both ways to test it.
 
-A call's connection sends Opus stereo at 128 kbit/s in its music mode, 20 ms
-a packet, with five silent frames when the microphone pauses, as Discord's
-clients do. It marks speaking with op 5 when it starts. A tick with less than
+A call's connection sends Opus stereo in its music mode, 20 ms a packet, at
+128 kbit/s unless Settings or the account card's bitrate menu set another
+rate from 8 to 510, which a call going on takes up from its next frame
+(`voice::set_bitrate`), with five silent frames when the microphone pauses,
+as Discord's clients do. It marks speaking with op 5 when it starts. A tick with less than
 20 ms of the microphone waiting, as when the microphone's thread is held up,
 sends nothing, and what waited goes in the next packet: others' clients
 conceal the missing one, which sounds smoother than a frame cut short with
@@ -506,6 +508,18 @@ gate which blocks are speech; WebRTC's gain control on what's left; then
 Yapfast's leveling and the microphone's volume, from
 [Settings](../voice.md#sounds). On Windows the microphone skips the system's
 own effects unless asked; see [Windows](../windows-beta.md#discord-voice-on-windows).
+
+In stereo, a switch in Settings and in the account card's bitrate menu, the
+microphone opens in two channels for a stereo microphone, an instrument or a
+mixer such as Voicemeeter. The processing runs on the channels' mix only for
+the gate: what the gate lets through goes out as the microphone heard it,
+both channels at the microphone's volume, with none of the echo
+cancellation, suppression, gain control or leveling, which work in mono
+(`Wide` in `discord_audio.rs`). It keeps the stereo blocks the gate may send
+as it opens, the 100 ms before and the pair. The gate's meter in Settings
+opens the microphone in mono, and hears the system's mix of the channels.
+Switching during a call opens the microphone again the other way, and the
+call's queue (`Microphone::set_channels`) drops what waited in the other.
 
 Echo cancellation takes each block as it's read, between what the speakers
 played before and after it; the rest takes the blocks two at a time, a call's

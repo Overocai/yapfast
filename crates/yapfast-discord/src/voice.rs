@@ -7,7 +7,7 @@ use std::{
     collections::{HashMap, VecDeque},
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
         mpsc as channel,
     },
     time::Duration,
@@ -36,6 +36,30 @@ pub const SAMPLE_RATE: u32 = 48_000;
 pub const CHANNELS: u16 = 2;
 /// Samples per channel in one 20 ms frame.
 pub const FRAME: usize = SAMPLE_RATE as usize / 50;
+
+/// The microphone's bit rate unless changed, in kbit/s: stereo at 128 in
+/// Opus's music mode, as songbird sent it when it ran calls, and as
+/// Yapfast's voice processing was tuned with.
+pub const DEFAULT_BITRATE: u32 = 128;
+/// The bit rates the microphone can be set to, in kbit/s: from 8, below
+/// which a voice falls apart, to Opus's most.
+pub const LEAST_BITRATE: u32 = 8;
+pub const MOST_BITRATE: u32 = 510;
+
+/// The microphone's bit rate in kbit/s, which calls take up from their next
+/// frame.
+static BITRATE: AtomicU32 = AtomicU32::new(DEFAULT_BITRATE);
+
+/// Calls send the microphone at `kbps`, kept to [`LEAST_BITRATE`] and
+/// [`MOST_BITRATE`], from their next frame.
+pub fn set_bitrate(kbps: u32) {
+    BITRATE.store(kbps.clamp(LEAST_BITRATE, MOST_BITRATE), Ordering::Relaxed);
+}
+
+/// The microphone's bit rate, in kbit/s.
+pub fn bitrate() -> u32 {
+    BITRATE.load(Ordering::Relaxed)
+}
 
 /// Receives a call's audio and connection changes, on the call's thread.
 pub trait Listener: Send + Sync + 'static {
@@ -272,36 +296,59 @@ impl Track {
 
 /// Audio for [`Call::play`]: the microphone's buffer.
 pub struct Input {
-    buffer: Arc<Mutex<VecDeque<f32>>>,
+    buffer: Arc<Mutex<Waiting>>,
     dropped: Arc<AtomicU64>,
 }
 
-/// Where Yapfast writes the processed microphone, as mono f32 at 48 kHz.
+/// The microphone's audio waiting to be sent, interleaved in `channels`:
+/// 1, or 2 from a stereo microphone.
+pub(crate) struct Waiting {
+    pub samples: VecDeque<f32>,
+    pub channels: usize,
+}
+
+/// Where Yapfast writes the processed microphone, as f32 at 48 kHz: mono,
+/// or interleaved stereo from a stereo microphone.
 #[derive(Clone)]
 pub struct Microphone {
-    buffer: Arc<Mutex<VecDeque<f32>>>,
+    buffer: Arc<Mutex<Waiting>>,
     /// Samples dropped as too old, for the call's log.
     dropped: Arc<AtomicU64>,
 }
 
-/// At most this much microphone audio waits to be sent; older audio is dropped
-/// so a stall never turns into lasting delay. It leaves room for the 100 ms
-/// Yapfast sends from just before its voice gate opens.
+/// At most this much microphone audio waits to be sent, in samples per
+/// channel; older audio is dropped so a stall never turns into lasting
+/// delay. It leaves room for the 100 ms Yapfast sends from just before its
+/// voice gate opens.
 const MICROPHONE_BACKLOG: usize = SAMPLE_RATE as usize / 4;
 
 impl Microphone {
+    /// Queues `samples`, whole frames in the channels set, so what's
+    /// dropped as too old is whole frames too.
     pub fn push(&self, samples: &[f32]) {
-        let mut buffer = lock(&self.buffer);
-        buffer.extend(samples);
-        let excess = buffer.len().saturating_sub(MICROPHONE_BACKLOG);
+        let mut waiting = lock(&self.buffer);
+        let most = MICROPHONE_BACKLOG * waiting.channels;
+        waiting.samples.extend(samples);
+        let excess = waiting.samples.len().saturating_sub(most);
         if excess > 0 {
-            buffer.drain(..excess);
+            waiting.samples.drain(..excess);
             self.dropped.fetch_add(excess as u64, Ordering::Relaxed);
         }
     }
 
     pub fn clear(&self) {
-        lock(&self.buffer).clear();
+        lock(&self.buffer).samples.clear();
+    }
+
+    /// What's pushed from now on comes in `channels`, 1 or 2; what waited
+    /// in the others goes.
+    pub fn set_channels(&self, channels: u16) {
+        let channels = usize::from(channels.clamp(1, 2));
+        let mut waiting = lock(&self.buffer);
+        if waiting.channels != channels {
+            waiting.samples.clear();
+            waiting.channels = channels;
+        }
     }
 }
 
@@ -309,8 +356,10 @@ impl Microphone {
 /// takes 20 ms of it every 20 ms while it plays, and sends nothing on a
 /// tick when less than that waits, as when the writer is behind.
 pub fn live_microphone() -> (Microphone, Input) {
-    let buffer: Arc<Mutex<VecDeque<f32>>> =
-        Arc::new(Mutex::new(VecDeque::with_capacity(MICROPHONE_BACKLOG)));
+    let buffer = Arc::new(Mutex::new(Waiting {
+        samples: VecDeque::with_capacity(MICROPHONE_BACKLOG),
+        channels: 1,
+    }));
     let dropped = Arc::new(AtomicU64::new(0));
     (
         Microphone {
@@ -330,9 +379,26 @@ mod tests {
         let (microphone, input) = live_microphone();
         microphone.push(&vec![0.0; MICROPHONE_BACKLOG]);
         microphone.push(&[1.0]);
-        let buffer = lock(&input.buffer);
-        assert_eq!(buffer.len(), MICROPHONE_BACKLOG);
-        assert_eq!(buffer.back(), Some(&1.0));
+        let waiting = lock(&input.buffer);
+        assert_eq!(waiting.samples.len(), MICROPHONE_BACKLOG);
+        assert_eq!(waiting.samples.back(), Some(&1.0));
+    }
+
+    #[test]
+    fn a_stereo_backlog_keeps_whole_frames() {
+        let (microphone, input) = live_microphone();
+        microphone.push(&[0.5; 4]);
+        microphone.set_channels(2);
+        assert!(
+            lock(&input.buffer).samples.is_empty(),
+            "the mono that waited goes"
+        );
+        microphone.push(&vec![0.0; MICROPHONE_BACKLOG * 2]);
+        microphone.push(&[-1.0, 1.0]);
+        let waiting = lock(&input.buffer);
+        assert_eq!(waiting.samples.len(), MICROPHONE_BACKLOG * 2);
+        let newest: Vec<f32> = waiting.samples.iter().rev().take(2).copied().collect();
+        assert_eq!(newest, [1.0, -1.0], "left and right stay in order");
     }
 
     #[test]

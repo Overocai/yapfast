@@ -202,6 +202,8 @@ pub enum Icon {
     SignalLow,
     NoiseBars,
     NoiseBarsOff,
+    /// The microphone's bit rate: a waveform's bars.
+    Bitrate,
     Palette,
     Help,
     /// The window's own title bar: back and forward, minimize, restore.
@@ -401,6 +403,7 @@ impl Icon {
             Icon::SignalLow => icon!("signal-low.svg"),
             Icon::NoiseBars => icon!("noise-bars.svg"),
             Icon::NoiseBarsOff => icon!("noise-bars-off.svg"),
+            Icon::Bitrate => icon!("bitrate.svg"),
         }
     }
 

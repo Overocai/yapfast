@@ -264,6 +264,10 @@ pub struct Voice {
     pub noise_strength: yapfast_core::noise::Strength,
     pub reduce_room_echo: bool,
     pub windows_microphone_effects: bool,
+    /// Discord calls send the microphone in stereo, and at this bit rate in
+    /// kbit/s: mono at 128 unless changed.
+    pub stereo_microphone: bool,
+    pub voice_bitrate: Option<u32>,
     /// The quietest speech Discord calls send, in dBFS.
     pub input_sensitivity: Option<i32>,
     /// Push to talk, its keybind and its release delay in ms.
@@ -309,6 +313,11 @@ impl Voice {
         noise::set_strength(self.noise_strength);
         noise::set_dereverb(self.reduce_room_echo);
         yapfast_core::set_windows_effects(self.windows_microphone_effects);
+        yapfast_core::discord_audio::set_stereo(self.stereo_microphone);
+        yapfast_core::discord_audio::set_bitrate(
+            self.voice_bitrate
+                .unwrap_or(yapfast_core::discord_audio::DEFAULT_BITRATE),
+        );
         let sensitivity = self
             .input_sensitivity
             .unwrap_or(noise::DEFAULT_SENSITIVITY as i32)
