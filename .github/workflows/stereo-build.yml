@@ -1,7 +1,8 @@
-# Builds this branch's Windows ZIP on every push to it, as nightly.yml's
-# windows job does, without its release or signing: the ZIP is the run's
-# artifact (Actions > the run > Artifacts > windows). Beside it, the unit
-# tests of the code the branch changes run on Linux.
+# Builds this branch's Windows ZIP and Linux AppImage on every push to it, as
+# nightly.yml's windows and linux jobs do, without the release, its signing
+# or the Arch package: they're the run's artifacts (Actions > the run >
+# Artifacts > windows, linux). Beside them, the unit tests of the code the
+# branch changes run on Linux.
 name: Stereo build
 
 on:
@@ -43,6 +44,32 @@ jobs:
         with:
           name: windows
           path: target/dist/discord/Yapfast-*
+          if-no-files-found: error
+          compression-level: 0
+
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      # The runner's preinstalled SDKs leave too little room for the build.
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+      - uses: actions/checkout@v5
+        with:
+          # Nix refuses a shallow Git repository as a flake.
+          fetch-depth: 0
+      - uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ github.token }}
+      - run: scripts/set-version "0.5.0-stereo.${{ github.run_number }}"
+      # A fresh runner installs Rust and fetches the crates for longer than
+      # scripts/package-linux.py gives cargo metadata.
+      - name: Fetch the toolchain and crates
+        run: nix develop path:./nix --command cargo fetch --locked
+      - run: scripts/build-appimage
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: target/dist/linux/Yapfast-*
           if-no-files-found: error
           compression-level: 0
 
