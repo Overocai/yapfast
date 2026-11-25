@@ -79,7 +79,7 @@ pub(super) fn bitrate_menu<'a>(ctx: crate::ctx::Ctx<'a>) -> Element<'a, Message>
             None,
             Some(Icon::Settings),
             Check::None,
-            Some(Message::Settings(crate::settings::Event::Open(
+            Some(crate::app::settings(crate::settings::Event::Open(
                 crate::settings::Section::Voice,
             ))),
         ),
