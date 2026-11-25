@@ -181,8 +181,6 @@ pub enum Drop {
     Start,
     /// A keybind's action, by its row.
     Keybind(usize),
-    /// The voice effects' plugin to add.
-    Effect,
 }
 
 /// Settings while open.

@@ -77,7 +77,14 @@ pub struct Voice {
     /// what the last change said, and whether it went wrong.
     pub effects_found: Option<Vec<voice_effects::Found>>,
     pub effects_note: Option<(String, bool)>,
+    /// What's typed to find a plugin to add.
+    pub effects_query: String,
 }
+
+/// The search for a plugin to add: its field's id, and how many plugins it
+/// lists at once.
+const EFFECTS_SEARCH: &str = "settings-effects-search";
+const EFFECTS_SHOWN: usize = 8;
 
 /// What's done to the voice effects: the plugins found; looking again; one
 /// chosen to add, by its place among those found; one removed, moved up,
@@ -86,6 +93,8 @@ pub struct Voice {
 #[derive(Clone, Debug)]
 pub enum Effects {
     Found(Vec<voice_effects::Found>),
+    /// What's typed to find a plugin to add.
+    Query(String),
     Rescan,
     Add(usize),
     Remove(u64),
@@ -178,13 +187,16 @@ impl Settings {
                 self.voice.effects_found = Some(found);
                 return Task::none();
             }
+            Effects::Query(query) => {
+                self.voice.effects_query = query;
+                return Task::none();
+            }
             Effects::Rescan => {
                 self.voice.effects_found = None;
                 self.voice.effects_note = None;
                 return look_for_effects();
             }
             Effects::Add(index) => {
-                self.open = None;
                 let Some(found) = self
                     .voice
                     .effects_found
@@ -628,38 +640,19 @@ impl<'a> Page<'a> {
                 "No plugins yet. Add one below, then open its editor to set it up.",
             ));
         }
-        let found = self.s.voice.effects_found.as_deref();
-        let mut options = vec![match found {
-            None => "Looking for plugins...".to_owned(),
-            Some([]) => "No VST plugins found".to_owned(),
-            Some(_) => "Choose a plugin to add".to_owned(),
-        }];
-        options.extend(found.into_iter().flatten().map(|plugin| {
-            let (name, format) = (&plugin.name, plugin.format.label());
-            match plugin.unusable {
-                Some(why) => format!("{name} \u{b7} {format} ({why})"),
-                None => format!("{name} \u{b7} {format}"),
-            }
-        }));
-        let open = self.s.open == Some(Drop::Effect);
-        let add = form::dropdown(
-            options,
-            Some(0),
-            open,
-            crate::app::settings(SettingsEvent::Drop(Drop::Effect)),
-            |index| {
-                if index == 0 {
-                    crate::app::settings(SettingsEvent::Drop(Drop::Effect))
-                } else {
-                    effects_message(Effects::Add(index - 1))
-                }
-            },
+        parts.push(form::heading(theme, "ADD A PLUGIN"));
+        let query = self.s.voice.effects_query.as_str();
+        let field = form::field(
+            theme,
+            EFFECTS_SEARCH,
+            "Search your plugins: a name, VST2, VST3 or a maker",
+            query,
         )
-        .enabled(found.is_some_and(|found| !found.is_empty()))
-        .view(look);
+        .on_input(|query| effects_message(Effects::Query(query)))
+        .width(Length::Fill);
         parts.push(
             row![
-                container(add).width(Length::Fill),
+                field,
                 action(
                     theme,
                     "Rescan",
@@ -671,6 +664,76 @@ impl<'a> Page<'a> {
             .align_y(Alignment::Center)
             .into(),
         );
+        match self.s.voice.effects_found.as_deref() {
+            None => parts.push(form::note(theme, "Looking for your plugins...")),
+            Some([]) => parts.push(form::note(
+                theme,
+                "No VST plugins found where they install. Install one, then Rescan.",
+            )),
+            Some(found) => {
+                let hits = voice_effects::search(found, query);
+                if hits.is_empty() {
+                    parts.push(form::note(
+                        theme,
+                        format!("No plugin matches \u{201c}{}\u{201d}.", query.trim()),
+                    ));
+                }
+                for &(at, plugin) in hits.iter().take(EFFECTS_SHOWN) {
+                    let added = chain
+                        .slots
+                        .iter()
+                        .any(|slot| slot.path == plugin.path && slot.format == plugin.format);
+                    let mut kind = plugin.format.label().to_owned();
+                    if let Some(maker) = voice_effects::folder(plugin) {
+                        kind = format!("{kind} \u{b7} {maker}");
+                    }
+                    let detail = match plugin.unusable {
+                        Some(why) => text(format!("{kind} \u{b7} {why}"))
+                            .size(12)
+                            .color(theme.danger),
+                        None => text(kind).size(12).color(theme.muted),
+                    };
+                    let words = column![
+                        text(plugin.name.clone())
+                            .size(14)
+                            .font(SEMIBOLD)
+                            .color(theme.text)
+                            .wrapping(text::Wrapping::None),
+                        detail,
+                    ]
+                    .spacing(2);
+                    let add = action(
+                        theme,
+                        if added { "Added" } else { "Add" },
+                        Kind::Plain,
+                        (!added && plugin.unusable.is_none())
+                            .then(|| effects_message(Effects::Add(at))),
+                    )
+                    .small();
+                    let (ground, edge) = (theme.sidebar, theme.edge);
+                    parts.push(
+                        container(
+                            row![container(words).width(Length::Fill).clip(true), add]
+                                .spacing(8)
+                                .align_y(Alignment::Center),
+                        )
+                        .padding([6, 10])
+                        .width(Length::Fill)
+                        .style(move |_| crate::style::outlined(ground, edge, 8.0))
+                        .into(),
+                    );
+                }
+                if hits.len() > EFFECTS_SHOWN {
+                    parts.push(form::note(
+                        theme,
+                        format!(
+                            "{} more. Type to narrow them down.",
+                            hits.len() - EFFECTS_SHOWN
+                        ),
+                    ));
+                }
+            }
+        }
         match &self.s.voice.effects_note {
             Some((note, true)) => parts.push(form::note_in(note.clone(), theme.danger)),
             Some((note, false)) => parts.push(form::note(theme, note.clone())),

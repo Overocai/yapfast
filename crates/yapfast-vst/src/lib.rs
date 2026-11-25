@@ -18,7 +18,7 @@ mod scan;
 #[cfg(windows)]
 mod win;
 
-pub use scan::{Format, Found, folders, look, scan, vst3_binary};
+pub use scan::{Format, Found, folder, folders, look, scan, search, vst3_binary};
 
 /// Whether plugins load on this platform.
 pub const AVAILABLE: bool = cfg!(windows);

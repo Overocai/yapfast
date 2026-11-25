@@ -166,6 +166,56 @@ pub fn look(path: &Path, format: Format) -> Option<Found> {
     })
 }
 
+/// The plugins `query` names, by their place in `found`, best first: those
+/// whose name starts with it, then those whose name holds it, then those
+/// whose name, format and folder hold each of its words; ignoring case. An
+/// empty query takes them all, in their order.
+pub fn search<'a>(found: &'a [Found], query: &str) -> Vec<(usize, &'a Found)> {
+    let query = query.trim().to_lowercase();
+    if query.is_empty() {
+        return found.iter().enumerate().collect();
+    }
+    let words: Vec<&str> = query.split_whitespace().collect();
+    let mut hits: Vec<(u8, usize, &Found)> = found
+        .iter()
+        .enumerate()
+        .filter_map(|(at, plugin)| {
+            let name = plugin.name.to_lowercase();
+            let rank = if name.starts_with(&query) {
+                0
+            } else if name.contains(&query) {
+                1
+            } else {
+                let all = format!(
+                    "{name} {} {}",
+                    plugin.format.label().to_lowercase(),
+                    folder(plugin).unwrap_or_default().to_lowercase()
+                );
+                if !words.iter().all(|word| all.contains(word)) {
+                    return None;
+                }
+                2
+            };
+            Some((rank, at, plugin))
+        })
+        .collect();
+    hits.sort_by_key(|&(rank, at, _)| (rank, at));
+    hits.into_iter()
+        .map(|(_, at, plugin)| (at, plugin))
+        .collect()
+}
+
+/// The folder a plugin sits in when it isn't one plugins are looked for in:
+/// often its maker's, as AIR Music Technology.
+pub fn folder(plugin: &Found) -> Option<String> {
+    let name = plugin.path.parent()?.file_name()?.to_string_lossy();
+    let looked = ["vst3", "vst2", "vst", "vstplugins", "steinberg", "plugins"];
+    (!looked
+        .iter()
+        .any(|folder| name.eq_ignore_ascii_case(folder)))
+    .then(|| name.into_owned())
+}
+
 /// The library inside a VST3 plugin: the file itself, or in a bundle's
 /// folder the one for this processor.
 pub fn vst3_binary(path: &Path) -> Option<PathBuf> {
@@ -284,6 +334,42 @@ impl Pe {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn plugins_are_searched_by_name_then_format_and_folder() {
+        let plugin = |path: &str, format| Found {
+            path: PathBuf::from(path),
+            format,
+            name: Path::new(path)
+                .file_stem()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned(),
+            unusable: None,
+        };
+        let found = [
+            plugin("/vst3/AIR Music Technology/Xpand!2.vst3", Format::Vst3),
+            plugin("/vst3/Wider.vst3", Format::Vst3),
+            plugin("/vst/Wider.dll", Format::Vst2),
+            plugin("/vst/OldWide.dll", Format::Vst2),
+        ];
+        let names = |query: &str| -> Vec<(usize, Format)> {
+            search(&found, query)
+                .into_iter()
+                .map(|(at, plugin)| (at, plugin.format))
+                .collect()
+        };
+        assert_eq!(
+            names("wid"),
+            [(1, Format::Vst3), (2, Format::Vst2), (3, Format::Vst2)],
+            "starting with it first, then holding it"
+        );
+        assert_eq!(names("wider vst2"), [(2, Format::Vst2)]);
+        assert_eq!(names("air"), [(0, Format::Vst3)], "by its maker's folder");
+        assert_eq!(names("  "), names(""), "nothing typed takes them all");
+        assert_eq!(names("").len(), 4);
+        assert!(names("reverb").is_empty());
+    }
 
     #[test]
     fn a_file_that_isnt_a_library_is_no_plugin() {
