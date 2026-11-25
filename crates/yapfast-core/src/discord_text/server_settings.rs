@@ -193,18 +193,25 @@ pub(super) fn command(
         DiscordCommand::ServerPicture { kind, path } => {
             tokio::task::spawn_blocking(move || {
                 let result = match kind {
-                    ServerPicture::Icon => read_shaped(&path, ICON, ICON_PREVIEW, "a server icon"),
-                    ServerPicture::Banner => {
-                        read_shaped(&path, BACKGROUND, BACKGROUND_PREVIEW, "a server banner")
+                    ServerPicture::Icon => {
+                        read_shaped(&path, ICON, ICON_PREVIEW, "a server icon", None)
                     }
+                    ServerPicture::Banner => read_shaped(
+                        &path,
+                        BACKGROUND,
+                        BACKGROUND_PREVIEW,
+                        "a server banner",
+                        None,
+                    ),
                     ServerPicture::Splash => read_shaped(
                         &path,
                         BACKGROUND,
                         BACKGROUND_PREVIEW,
                         "an invite background",
+                        None,
                     ),
                     ServerPicture::RoleIcon => {
-                        read_shaped(&path, ROLE_ICON, ROLE_ICON_PREVIEW, "a role icon")
+                        read_shaped(&path, ROLE_ICON, ROLE_ICON_PREVIEW, "a role icon", None)
                     }
                     ServerPicture::Emoji => super::expressions::read_emoji(&path),
                     ServerPicture::Sticker => super::expressions::read_sticker(&path),
