@@ -1,20 +1,20 @@
 # Builds this branch's Windows ZIP and Linux AppImage on every push to it, as
 # nightly.yml's windows and linux jobs do, without the release, its signing
 # or the Arch package: they're the run's artifacts (Actions > the run >
-# Artifacts > windows, linux). Beside them, the unit tests of the code the
-# branch changes run on Linux.
-name: Stereo build
+# Artifacts > windows, linux). Beside them, Clippy checks the workspace and
+# the unit tests of the code the branch changes run on Linux.
+name: Overocai build
 
 on:
   push:
-    branches: [feat/stereo-microphone]
+    branches: [overocai]
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: stereo-build-${{ github.ref }}
+  group: overocai-build-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -38,7 +38,7 @@ jobs:
         with:
           cache-on-failure: true
       # Above 0.4.1, so the updater offers only a newer stable release.
-      - run: scripts/set-version "0.5.0-stereo.${{ github.run_number }}"
+      - run: scripts/set-version "0.5.0-overocai.${{ github.run_number }}"
       - run: nix develop path:./nix#windows --command scripts/build-windows discord --no-installer
       - uses: actions/upload-artifact@v4
         with:
@@ -60,7 +60,7 @@ jobs:
       - uses: cachix/install-nix-action@v31
         with:
           github_access_token: ${{ github.token }}
-      - run: scripts/set-version "0.5.0-stereo.${{ github.run_number }}"
+      - run: scripts/set-version "0.5.0-overocai.${{ github.run_number }}"
       # A fresh runner installs Rust and fetches the crates for longer than
       # scripts/package-linux.py gives cargo metadata.
       - name: Fetch the toolchain and crates
@@ -73,7 +73,7 @@ jobs:
           if-no-files-found: error
           compression-level: 0
 
-  tests:
+  checks:
     runs-on: ubuntu-latest
     steps:
       - name: Free disk space
@@ -85,7 +85,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
-      - name: The microphone's queue, the call's frames and the stereo capture
+      - name: Formatting
+        run: nix develop path:./nix --command cargo fmt --all -- --check
+      - name: Clippy
+        run: nix develop path:./nix --command cargo clippy --locked --profile fast --workspace --all-targets -- -D warnings
+      - name: The unit tests of what the branch changes
         run: |
           nix develop path:./nix --command cargo test --locked --profile fast -p yapfast-discord --lib -- voice::tests:: call_connection::tests::
           nix develop path:./nix --command cargo test --locked --profile fast -p yapfast-core --lib -- discord_audio::tests::
