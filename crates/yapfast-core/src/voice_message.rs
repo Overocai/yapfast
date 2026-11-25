@@ -1,16 +1,17 @@
-//! The voice message playing in the conversation view. Its recording, a
-//! small Ogg Opus file, downloads whole, then decodes a packet at a time on
-//! a thread of its own as it plays on the speakers chosen for calls, as
-//! fast and loud as the person chose, from wherever they move it to. At its
-//! end it goes back to the start, kept to play again. One plays at a time;
-//! dropping it stops it and lets its recording go.
+//! The voice message playing in the conversation view, or an attached
+//! sound file playing in its card. Its recording, a small Ogg Opus file or
+//! any sound FFmpeg reads, downloads whole, then decodes a packet at a time
+//! on a thread of its own as it plays on the speakers chosen for calls, as
+//! fast (a voice message) and loud as the person chose, from wherever they
+//! move it to. At its end it goes back to the start, kept to play again.
+//! One plays at a time; dropping it stops it and lets its recording go.
 
 use std::{
     future::Future,
     io::Cursor,
     sync::{
         Arc,
-        atomic::{AtomicU32, Ordering::Relaxed},
+        atomic::{AtomicU32, AtomicU64, Ordering::Relaxed},
         mpsc,
     },
     time::Duration,
@@ -66,17 +67,24 @@ pub enum Report {
 }
 
 /// How fast and loud it plays, which the person may change as it plays: an
-/// [`f32`] each, by its bits; muted, it plays at no volume.
+/// [`f32`] each, by its bits; muted, it plays at no volume. And how long it
+/// plays, in milliseconds, once its file opened and said ([`UNKNOWN`]
+/// before).
 struct Tuning {
     speed: AtomicU32,
     volume: AtomicU32,
+    length: AtomicU64,
 }
+
+/// A length not yet known.
+const UNKNOWN: u64 = u64::MAX;
 
 impl Tuning {
     fn new(tuning: VoiceTuning) -> Self {
         Self {
             speed: AtomicU32::new(tuning.speed.to_bits()),
             volume: AtomicU32::new(Self::volume(tuning).to_bits()),
+            length: AtomicU64::new(UNKNOWN),
         }
     }
 
@@ -124,7 +132,8 @@ impl Drop for Player {
 impl Player {
     /// Starts downloading `playback`'s recording with `download`, then plays
     /// it from the start on `speakers`, tuned as `tuning` says; or with
-    /// `paused_at`, waits there paused.
+    /// `paused_at`, waits there paused. An attached sound file
+    /// (`playback.file`) plays at its own speed.
     pub fn start<F>(
         playback: VoicePlayback,
         speakers: Option<String>,
@@ -135,8 +144,20 @@ impl Player {
     where
         F: Future<Output = Result<Vec<u8>>> + Send + 'static,
     {
+        let file = playback.file.is_some();
+        let (cant_download, cant_play) = if file {
+            (
+                "Yapfast couldn't download this audio file.",
+                "Yapfast couldn't play this audio file.",
+            )
+        } else {
+            (
+                "Yapfast couldn't download this voice message.",
+                "Yapfast couldn't play this voice message.",
+            )
+        };
         let (control, controls) = mpsc::channel();
-        let tuning = Arc::new(Tuning::new(tuning));
+        let tuning = Arc::new(Tuning::new(Self::tuned(file, tuning)));
         let tuned = tuning.clone();
         let (reported, reports) = tokio::sync::mpsc::unbounded_channel();
         let download = tokio::spawn(async move {
@@ -145,11 +166,9 @@ impl Player {
                 Err(error) => {
                     tracing::warn!(
                         error = format!("{error:#}"),
-                        "could not download a voice message"
+                        "could not download a voice message or sound file"
                     );
-                    let _ = reported.send(Report::Failed(
-                        "Yapfast couldn't download this voice message.",
-                    ));
+                    let _ = reported.send(Report::Failed(cant_download));
                     return;
                 }
             };
@@ -157,7 +176,8 @@ impl Player {
                 .name("yapfast-voice-message".into())
                 .spawn(move || {
                     let speakers = speakers.as_deref();
-                    play_on(&data, speakers, &controls, &tuned, &reported, paused_at);
+                    let reports = (&reported, cant_play);
+                    play_on(&data, speakers, &controls, &tuned, reports, paused_at);
                 });
             if let Err(error) = started {
                 tracing::warn!(%error, "could not start a voice message");
@@ -181,7 +201,21 @@ impl Player {
 
     /// Plays it as fast and loud as `tuning` says, from its next packet.
     pub fn tune(&self, tuning: VoiceTuning) {
-        self.tuning.set(tuning);
+        self.tuning
+            .set(Self::tuned(self.playback.file.is_some(), tuning));
+    }
+
+    /// `tuning` as it plays: an attached sound file at its own speed, as
+    /// Discord's client plays one.
+    fn tuned(file: bool, tuning: VoiceTuning) -> VoiceTuning {
+        if file {
+            VoiceTuning {
+                speed: 1.0,
+                ..tuning
+            }
+        } else {
+            tuning
+        }
     }
 
     /// Plays it on from where it paused, or pauses it.
@@ -205,7 +239,13 @@ impl Player {
     /// Takes news of it. False once it stopped, as when it failed.
     pub fn handle(&mut self, report: Option<Report>) -> bool {
         match report {
-            Some(Report::Loaded) => self.playback.loading = false,
+            Some(Report::Loaded) => {
+                self.playback.loading = false;
+                let length = self.tuning.length.load(Relaxed);
+                if length != UNKNOWN {
+                    self.playback.duration_ms = Some(length);
+                }
+            }
             Some(Report::Position(position_ms)) if self.moves == 0 => {
                 self.playback.position_ms = position_ms;
             }
@@ -258,7 +298,7 @@ fn play_on(
     speakers: Option<&str>,
     controls: &mpsc::Receiver<Control>,
     tuning: &Tuning,
-    reports: &UnboundedSender<Report>,
+    (reports, cant_play): (&UnboundedSender<Report>, &'static str),
     mut paused_at: Option<u64>,
 ) {
     loop {
@@ -288,7 +328,7 @@ fn play_on(
                     error = format!("{error:#}"),
                     "could not play a voice message"
                 );
-                let _ = reports.send(Report::Failed("Yapfast couldn't play this voice message."));
+                let _ = reports.send(Report::Failed(cant_play));
                 return;
             }
         }
@@ -320,6 +360,9 @@ fn play(
 ) -> Result<bool> {
     let mut file = Video::open_sound(Cursor::new(data)).context("not a sound Yapfast can play")?;
     let (rate, channels) = file.sound.context("the file has no sound")?;
+    tuning
+        .length
+        .store(file.duration_ms.unwrap_or(UNKNOWN), Relaxed);
     let mut resampler = Resampler::new(rate, channels);
     let mut tempo = Tempo::new();
     let _ = reports.send(Report::Loaded);

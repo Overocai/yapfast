@@ -99,6 +99,10 @@ const MAX_VIDEO_BYTES: u64 = 1024 * 1024 * 1024;
 /// The largest voice message that plays: Discord's are Opus at a few
 /// kilobytes a second, so this holds an hour of one.
 const MAX_VOICE_MESSAGE_BYTES: usize = 16 * 1024 * 1024;
+/// The largest attached sound file that plays in its card, held in memory
+/// while it plays: past Discord's 10 MB without Nitro, and a CD's hour of
+/// FLAC.
+const MAX_SOUND_FILE_BYTES: usize = 160 * 1024 * 1024;
 
 /// Work for the open channel that finished in the background.
 pub enum Done {
@@ -290,20 +294,23 @@ impl Chat {
             Command::PlayVoiceMessage {
                 room,
                 item,
+                file,
                 speakers,
                 tuning,
             } => {
-                self.play_voice_message(room, item, speakers, tuning, None, events);
+                self.play_voice_message((room, item, file), speakers, tuning, None, events);
                 return;
             }
             Command::MoveVoiceMessage {
                 room,
                 item,
+                file,
                 at_ms,
                 speakers,
                 tuning,
             } => {
-                self.play_voice_message(room, item, speakers, tuning, Some(at_ms), events);
+                let recording = (room, item, file);
+                self.play_voice_message(recording, speakers, tuning, Some(at_ms), events);
                 return;
             }
             Command::TuneVoiceMessage(tuning) => {
@@ -366,24 +373,24 @@ impl Chat {
         }
     }
 
-    /// Plays a voice message on from where it paused, or from the start in
-    /// place of any other once its recording downloads. With `moved_to`, it
-    /// moves there instead, playing or paused as it was, or in place of any
-    /// other waits there paused.
+    /// Plays a voice message, or with `file` an item's attached sound file,
+    /// on from where it paused, or from the start in place of any other
+    /// once its recording downloads. With `moved_to`, it moves there
+    /// instead, playing or paused as it was, or in place of any other waits
+    /// there paused.
     fn play_voice_message(
         &mut self,
-        room: String,
-        item: String,
+        (room, item, file): (String, String, Option<usize>),
         speakers: Option<String>,
         tuning: crate::chat::VoiceTuning,
         moved_to: Option<u64>,
         events: &UnboundedSender<Event>,
     ) {
-        if let Some(player) = self
-            .voice_message
-            .as_mut()
-            .filter(|player| player.playback.room == room && player.playback.item == item)
-        {
+        if let Some(player) = self.voice_message.as_mut().filter(|player| {
+            player.playback.room == room
+                && player.playback.item == item
+                && player.playback.file == file
+        }) {
             player.tune(tuning);
             match moved_to {
                 Some(at) => player.move_to(at),
@@ -396,24 +403,33 @@ impl Chat {
         let url = self
             .channels
             .shown_mut(&room)
-            .and_then(|channel| channel.attachment(&item, 0))
+            .and_then(|channel| channel.attachment(&item, file.unwrap_or(0)))
             .map(|recording| recording.url.clone());
         let playback = VoicePlayback {
             room,
             item,
+            file,
             ..Default::default()
         };
         let Some(url) = url else {
+            let gone = match file {
+                Some(_) => "This file is no longer available.",
+                None => "This voice message is no longer available.",
+            };
             let _ = events.send(Event::VoiceMessage(Some(VoicePlayback {
-                error: Some("This voice message is no longer available.".into()),
+                error: Some(gone.into()),
                 ..playback
             })));
             return;
         };
+        let most = match file {
+            Some(_) => MAX_SOUND_FILE_BYTES,
+            None => MAX_VOICE_MESSAGE_BYTES,
+        };
         let discord = self.discord.clone();
         let player =
             crate::voice_message::Player::start(playback, speakers, tuning, moved_to, async move {
-                discord.download_now(&url, MAX_VOICE_MESSAGE_BYTES).await
+                discord.download_now(&url, most).await
             });
         let _ = events.send(Event::VoiceMessage(Some(player.playback.clone())));
         self.voice_message = Some(player);

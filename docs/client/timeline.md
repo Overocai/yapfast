@@ -168,6 +168,14 @@ slash command, where one may write, is written in the composer
   the slider takes the keys from the fields, once a press; while it's open, keys no
   field took turn it (`playback::voice_key`: Up and Down 5 %, Page Up and
   Page Down 20 %) or close it (Escape). The core plays it.
+- An attached sound file (`message::attachments::sound_card`) shows its
+  file card with a music note, its controls in a row under it: play or
+  pause, how far it has played of how long ("1:02 / 3:25", once its file
+  said, "Loading..." until then, or why it couldn't play in red), a track
+  filled in the accent up to where it is, which a press or a drag moves
+  once its length is known (pausing while held, as a voice message's
+  waveform does), and the same mute and volume as a voice message's
+  (`playback::volume_button`, keyed `{item}/{index}`). The core plays it.
 - An app's components (`components.rs`): text beside a thumbnail or a button,
   galleries and files, gaps and dividers, rows of buttons and menus, in a
   frame with the colour's bar when they're in a container. A link button

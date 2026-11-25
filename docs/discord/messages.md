@@ -402,6 +402,18 @@ Yapfast is back, rather than showing an error.
   one playing. Moved, its thread seeks the
   recording 80 ms early, Opus's pre-roll, and leaves out what's before the
   time.
+- An attached sound file, one whose name ends in `.mp3`, `.ogg`, `.oga`,
+  `.opus`, `.wav`, `.flac`, `.m4a`, `.aac` or `.weba` and that isn't a picture
+  or a video (`chat::Attachment::sound`), plays in its card, as Discord's
+  client plays audio attachments in place: the file's card, with play or
+  pause, its time, a track and the volume under it. The voice message's
+  player plays it (`Command::PlayVoiceMessage` with the attachment's index
+  as `file`): it downloads whole, up to 160 MiB, decodes through the
+  libwebrtc FFmpeg's sound decoders, and plays on the call's speakers at
+  its own speed, at the voice messages' volume and mute, which it shares.
+  How long it plays comes from its file once it opens; until then its
+  track takes no press. One plays at a time, a voice message or a sound
+  file: playing another stops it, as closing its channel does.
 - Markdown shows as Discord's client shows it. Bold, italics, strikethrough,
   inline code, lists and links are runs of styled text
   (`crates/yapfast-iced/src/markdown.rs`, which reads them with

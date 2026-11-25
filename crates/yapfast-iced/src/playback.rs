@@ -3,10 +3,12 @@
 //! it, its waveform filled up to where it has played (pressed, it moves
 //! there, and follows the pointer while held), its time counting down, and
 //! while the pointer is on it (always with animations off) the speed and
-//! mute. And videos: the poster with a play mark, then the video in its
-//! cell, its controls along the bottom while the pointer is on it or it's
-//! paused, and full screen with keys of its own. The core plays both and
-//! says where they are; nothing here keeps time.
+//! mute. Attached sound files, in their card's controls
+//! (`message::attachments::sound_card`), as Discord's client plays audio
+//! attachments. And videos: the poster with a play mark, then the video in
+//! its cell, its controls along the bottom while the pointer is on it or
+//! it's paused, and full screen with keys of its own. The core plays them
+//! all and says where they are; nothing here keeps time.
 
 use iced::{
     Alignment, Background, Color, Element, Length, Padding, Size, Task, gradient,
@@ -48,6 +50,9 @@ pub struct Playback {
     voice_press: iced::Point,
     /// The voice message paused while its waveform is held.
     pub voice_held: Option<String>,
+    /// The sound file paused while its track is held, by its item and
+    /// index.
+    pub sound_held: Option<(String, usize)>,
     /// How far into the message's video playing its last frame is, in
     /// milliseconds.
     pub clip_time: Option<u64>,
@@ -77,6 +82,13 @@ pub enum Event {
     Volume(f32),
     Turn(f32),
     VolumeHover(String, bool),
+    /// Play an attached sound file in its card, by its item and index, or
+    /// pause it while it plays.
+    ToggleSound(String, usize),
+    /// Move it this far through, from 0 to 1; pressing on its track pauses
+    /// it while it plays, until let go.
+    SeekSound(String, usize, f32),
+    ReleasedSound(String, usize),
 }
 
 /// What a video's cell asks for.
@@ -170,7 +182,9 @@ pub fn voice_event(app: &mut App, event: Event) -> Task<Message> {
                 .state()
                 .voice_message
                 .as_ref()
-                .is_some_and(|playback| playback.item == item && playback.playing);
+                .is_some_and(|playback| {
+                    playback.item == item && playback.file.is_none() && playback.playing
+                });
             if playing && app.playback.voice_held.is_none() {
                 app.playback.voice_held = Some(item.clone());
                 app.client
@@ -221,6 +235,31 @@ pub fn voice_event(app: &mut App, event: Event) -> Task<Message> {
         Event::Point(item, entered) => {
             crate::app::point(&mut app.pointed.voice, item, entered);
             return Task::none();
+        }
+        Event::ToggleSound(item, index) => {
+            app.client.dispatch(Action::ToggleSound(item, index));
+        }
+        Event::SeekSound(item, index, at) => {
+            // Playing, it pauses while held and plays on once let go.
+            let playing = app
+                .client
+                .state()
+                .voice_message
+                .as_ref()
+                .is_some_and(|playback| {
+                    playback.item == item && playback.file == Some(index) && playback.playing
+                });
+            if playing && app.playback.sound_held.is_none() {
+                app.playback.sound_held = Some((item.clone(), index));
+                app.client
+                    .dispatch(Action::ToggleSound(item.clone(), index));
+            }
+            app.client.dispatch(Action::MoveSound(item, index, at));
+        }
+        Event::ReleasedSound(item, index) => {
+            if app.playback.sound_held.take().is_some() {
+                app.client.dispatch(Action::ToggleSound(item, index));
+            }
         }
     }
     app.sync()
@@ -419,7 +458,7 @@ pub fn voice_card<'a>(
     let playback = state
         .voice_message
         .as_ref()
-        .filter(|playback| playback.item == *item);
+        .filter(|playback| playback.item == *item && playback.file.is_none());
     let playing = playback.is_some_and(|playback| playback.playing);
     let enabled = !state.preview && message.delivery == yapfast_core::chat::Delivery::default();
     let played = playback.map_or(0.0, |playback| {
@@ -540,40 +579,7 @@ pub fn voice_card<'a>(
             border: crate::style::round(11),
             ..button::Style::default()
         });
-        let mute = ctx.look.icon_button(
-            if tuning.muted {
-                Icon::VolumeOff
-            } else {
-                Icon::Volume
-            },
-            match (volume_open, tuning.muted) {
-                (true, _) => "",
-                (false, true) => "Unmute",
-                (false, false) => "Mute",
-            },
-            Message::Voice(Event::Mute(!tuning.muted)),
-        );
-        // The pointer on the mute opens the volume over it, upright as
-        // Discord's desktop player has it, centred on the button.
-        let slot = container(mute).center_x(MUTE);
-        let slot: Element<'a, Message> = if volume_open {
-            container(iced::widget::stack![
-                slot,
-                crate::widgets::Corner::new(
-                    voice_volume_slider(ctx, item, tuning),
-                    (MUTE - VOICE_SLOT) / 2.0,
-                    -(VOICE_SLIDER + VOICE_GAP)
-                )
-                .free(),
-            ])
-            .width(MUTE)
-            .into()
-        } else {
-            slot.into()
-        };
-        let mute = mouse_area(slot)
-            .on_enter(Message::Voice(Event::VolumeHover(item.clone(), true)))
-            .on_exit(Message::Voice(Event::VolumeHover(item.clone(), false)));
+        let mute = volume_button(ctx, item.clone());
         card = card.push(row![speed, mute].spacing(4).align_y(Alignment::Center));
     }
     let ground = theme.sidebar;
@@ -592,6 +598,52 @@ pub fn voice_card<'a>(
     )
     .padding(Padding::ZERO.top(4))
     .into()
+}
+
+/// How loud voice messages and sound files play, from a card by `key` (a
+/// voice message's item, or a sound file's `{item}/{index}`): the mute,
+/// and while the pointer is on it the volume over it, upright as
+/// Discord's desktop player has it, centred on the button.
+pub fn volume_button<'a>(ctx: crate::ctx::Ctx<'a>, key: String) -> Element<'a, Message> {
+    let tuning = ctx.state.voice_tuning;
+    let volume_open = ctx
+        .playback
+        .voice_volume
+        .as_ref()
+        .is_some_and(|(open, count)| *open == key && *count > 0);
+    let mute = ctx.look.icon_button(
+        if tuning.muted {
+            Icon::VolumeOff
+        } else {
+            Icon::Volume
+        },
+        match (volume_open, tuning.muted) {
+            (true, _) => "",
+            (false, true) => "Unmute",
+            (false, false) => "Mute",
+        },
+        Message::Voice(Event::Mute(!tuning.muted)),
+    );
+    let slot = container(mute).center_x(MUTE);
+    let slot: Element<'a, Message> = if volume_open {
+        container(iced::widget::stack![
+            slot,
+            crate::widgets::Corner::new(
+                voice_volume_slider(ctx, &key, tuning),
+                (MUTE - VOICE_SLOT) / 2.0,
+                -(VOICE_SLIDER + VOICE_GAP)
+            )
+            .free(),
+        ])
+        .width(MUTE)
+        .into()
+    } else {
+        slot.into()
+    };
+    mouse_area(slot)
+        .on_enter(Message::Voice(Event::VolumeHover(key.clone(), true)))
+        .on_exit(Message::Voice(Event::VolumeHover(key, false)))
+        .into()
 }
 
 /// A voice message's volume, a popup over its mute: an upright slider

@@ -1932,6 +1932,9 @@ pub enum Action {
     Video(chat::VideoCommand),
     /// Play an item's voice message, or pause it while it plays.
     ToggleVoiceMessage(String),
+    /// Play an item's attached sound file in its card, by its index, or
+    /// pause it while it plays.
+    ToggleSound(String, usize),
     /// Play voice messages at the next speed: 1, 1.5, then 2 times as fast.
     CycleVoiceMessageSpeed,
     /// Play voice messages this loud, from 0 to 1 as the slider stands,
@@ -1941,6 +1944,9 @@ pub enum Action {
     MuteVoiceMessages(bool),
     /// Move an item's voice message this far through it, from 0 to 1.
     MoveVoiceMessage(String, f32),
+    /// Move an item's attached sound file, by its index, this far through
+    /// it, from 0 to 1, once its length is known.
+    MoveSound(String, usize, f32),
     /// Show the message's next image, or with -1 its previous one, wrapping around.
     StepImage(isize),
     CloseImage,
@@ -3734,6 +3740,8 @@ impl Application {
             }
             Action::ToggleVoiceMessage(item) => self.toggle_voice_message(item),
             Action::MoveVoiceMessage(item, fraction) => self.move_voice_message(item, fraction),
+            Action::ToggleSound(item, index) => self.toggle_sound(item, index),
+            Action::MoveSound(item, index, fraction) => self.move_sound(item, index, fraction),
             Action::CycleVoiceMessageSpeed => {
                 let speed = &mut self.state.voice_tuning.speed;
                 *speed = if *speed < 1.25 {

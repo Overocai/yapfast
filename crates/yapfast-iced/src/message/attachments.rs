@@ -1,5 +1,5 @@
 //! What a message carries besides its text: pictures and videos in their
-//! gallery, stickers, and files as cards.
+//! gallery, stickers, and files as cards, a sound file's with its player.
 
 use iced::{
     Alignment, Color, Element, Length, Padding, Size,
@@ -14,6 +14,7 @@ use crate::{
     media::{self, Fit, Gallery, Shot},
     pictures::Icon,
     style::rounded,
+    widgets::Scrub,
 };
 
 use super::{FILE_CARD_WIDTH, FILE_ICON, PLAY_BADGE, STICKER, reveal_key};
@@ -353,6 +354,149 @@ pub fn file_card<'a>(
     index: usize,
     attachment: &'a Attachment,
 ) -> Element<'a, Message> {
+    card_frame(ctx, file_row(ctx, item, index, attachment, Icon::File))
+}
+
+/// The controls' row under a sound file's card, and its track.
+const SOUND_ROW: f32 = 32.0;
+const SOUND_TRACK: f32 = 4.0;
+/// How much taller a sound file's card is than a file's: its controls'
+/// row and the gap over it.
+pub const SOUND_EXTRA: f32 = SOUND_ROW + 8.0;
+
+/// An attached sound file's card, as Discord's client plays one in place:
+/// the file's card, then play or pause, how far it has played of how long
+/// (once its file said), the track to move through it, which a press or a
+/// drag moves, and the mute with the volume over it, which voice messages
+/// share. The core plays it (`Action::ToggleSound`).
+pub fn sound_card<'a>(
+    ctx: crate::ctx::Ctx<'a>,
+    message: &'a ChatMessage,
+    index: usize,
+    attachment: &'a Attachment,
+) -> Element<'a, Message> {
+    use crate::playback::Event;
+    let theme = ctx.look.theme;
+    let state = ctx.state;
+    let item = &message.item;
+    let playback = state
+        .voice_message
+        .as_ref()
+        .filter(|playback| playback.item == *item && playback.file == Some(index));
+    let playing = playback.is_some_and(|playback| playback.playing);
+    let enabled =
+        !state.preview && !message.deleted && message.delivery == chat::Delivery::default();
+    let (icon, label) = if playing {
+        (Icon::Pause, "Pause")
+    } else {
+        (Icon::Play, "Play")
+    };
+    let play = ctx
+        .look
+        .icon_button(
+            icon,
+            label,
+            enabled.then(|| Message::Voice(Event::ToggleSound(item.clone(), index))),
+        )
+        .size(SOUND_ROW, 20);
+    let duration = playback.and_then(|playback| playback.duration_ms);
+    let at = playback.map_or(0, |playback| playback.position_ms);
+    let (time, ink) = match playback {
+        Some(playback) if playback.error.is_some() => {
+            (playback.error.clone().unwrap_or_default(), theme.danger)
+        }
+        Some(playback) if playback.loading && duration.is_none() => {
+            ("Loading...".to_owned(), theme.muted)
+        }
+        _ => (crate::playback::video_time(at, duration), theme.muted),
+    };
+    let progress = match duration {
+        Some(duration) if duration > 0 => (at as f32 / duration as f32).min(1.0),
+        _ => 0.0,
+    };
+    let (fill, rest) = (theme.accent, theme.line);
+    let filled = row![
+        container(Space::new().height(SOUND_TRACK))
+            .width(Length::FillPortion(
+                ((progress * 1000.0).round() as u16).max(1)
+            ))
+            .style(move |_| rounded(fill, SOUND_TRACK / 2.0)),
+        Space::new().width(Length::FillPortion(
+            ((1000.0 - progress * 1000.0).round() as u16).max(1)
+        )),
+    ];
+    let track = stack![
+        container(Space::new().width(Length::Fill).height(SOUND_TRACK))
+            .style(move |_| rounded(rest, SOUND_TRACK / 2.0)),
+        filled,
+    ];
+    let track = container(track)
+        .height(SOUND_ROW)
+        .width(Length::Fill)
+        .align_y(Alignment::Center);
+    // Once it's known how long it plays, as Discord's player waits for it.
+    let track: Element<'a, Message> = if enabled && duration.is_some() {
+        let (seek, released) = (item.clone(), item.clone());
+        Scrub::new(track, move |at| {
+            Message::Voice(Event::SeekSound(seek.clone(), index, at))
+        })
+        .released(Message::Voice(Event::ReleasedSound(released, index)))
+        .into()
+    } else {
+        track.into()
+    };
+    let controls = row![
+        play,
+        text(time)
+            .size(theme.type_size("small", 12.0))
+            .font(theme.font("small", REGULAR))
+            .color(ink)
+            .wrapping(text::Wrapping::None),
+        track,
+        crate::playback::volume_button(ctx, format!("{item}/{index}")),
+    ]
+    .spacing(8)
+    .height(SOUND_ROW)
+    .align_y(Alignment::Center);
+    card_frame(
+        ctx,
+        column![
+            file_row(ctx, item, index, attachment, Icon::Music),
+            controls
+        ]
+        .spacing(8),
+    )
+}
+
+/// A file card's ground: the sidebar's, in a 1 px edge with round corners,
+/// at most as wide as Discord's.
+fn card_frame<'a>(
+    ctx: crate::ctx::Ctx<'a>,
+    content: impl Into<Element<'a, Message>>,
+) -> Element<'a, Message> {
+    let theme = ctx.look.theme;
+    let (ground, edge) = (theme.sidebar, theme.edge);
+    container(content)
+        .padding(Padding {
+            top: 12.0,
+            bottom: 12.0,
+            left: 12.0,
+            right: 8.0,
+        })
+        .max_width(FILE_CARD_WIDTH)
+        .style(move |_| crate::style::outlined(ground, edge, 8.0))
+        .into()
+}
+
+/// A file's row in its card: `icon` in the accent, its name and size (and
+/// why a picture shows no preview), and Save, which asks where.
+fn file_row<'a>(
+    ctx: crate::ctx::Ctx<'a>,
+    item: &str,
+    index: usize,
+    attachment: &'a Attachment,
+    icon: Icon,
+) -> Element<'a, Message> {
     let theme = ctx.look.theme;
     let size = attachment.size.map(chat::file_size);
     let detail = match (attachment.image, attachment.preview_failed, size) {
@@ -376,8 +520,8 @@ pub fn file_card<'a>(
                 .color(theme.muted),
         );
     }
-    let card = row![
-        ctx.look.glyph(Icon::File, FILE_ICON, theme.accent),
+    row![
+        ctx.look.glyph(icon, FILE_ICON, theme.accent),
         container(words).width(Length::Fill).clip(true),
         ctx.look
             .icon_button(
@@ -388,16 +532,6 @@ pub fn file_card<'a>(
             .size(32.0, 20),
     ]
     .spacing(12)
-    .align_y(Alignment::Center);
-    let (ground, edge) = (theme.sidebar, theme.edge);
-    container(card)
-        .padding(Padding {
-            top: 12.0,
-            bottom: 12.0,
-            left: 12.0,
-            right: 8.0,
-        })
-        .max_width(FILE_CARD_WIDTH)
-        .style(move |_| crate::style::outlined(ground, edge, 8.0))
-        .into()
+    .align_y(Alignment::Center)
+    .into()
 }

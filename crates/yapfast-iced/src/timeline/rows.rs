@@ -441,6 +441,15 @@ pub fn row_height(
     if files > 0 && message.voice.is_some() {
         content += crate::playback::VOICE_CARD - FILE_CARD - 4.0;
     }
+    // A sound file's card has its controls under it; a voice message's
+    // recording, the first, is its pill instead.
+    let sounds = crate::message::files(message, Placement::Message)
+        .enumerate()
+        .filter(|(at, (_, attachment))| {
+            attachment.sound() && !(*at == 0 && message.voice.is_some())
+        })
+        .count();
+    content += sounds as f32 * crate::message::attachments::SOUND_EXTRA;
     if let Some(poll) = &message.poll {
         content += crate::polls::estimate(poll);
     }

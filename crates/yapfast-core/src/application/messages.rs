@@ -368,13 +368,37 @@ impl Application {
             .state
             .message(&item)
             .is_some_and(|message| message.voice.is_some());
-        let Some(room) = self.state.room_of(&item).cloned().filter(|_| voice) else {
+        if !voice {
+            return vec![];
+        }
+        self.toggle_recording(item, None)
+    }
+
+    /// Plays an item's attached sound file in its card, from where it
+    /// paused, or pauses it while it plays, as a voice message's button
+    /// does.
+    pub(super) fn toggle_sound(&mut self, item: String, index: usize) -> Vec<Effect> {
+        let sound = self
+            .state
+            .message(&item)
+            .and_then(|message| message.attachments.get(index))
+            .is_some_and(chat::Attachment::sound);
+        if !sound {
+            return vec![];
+        }
+        self.toggle_recording(item, Some(index))
+    }
+
+    /// Plays a voice message's recording, or with `file` an attached sound
+    /// file, from where it paused, or pauses it while it plays.
+    fn toggle_recording(&mut self, item: String, file: Option<usize>) -> Vec<Effect> {
+        let Some(room) = self.state.room_of(&item).cloned() else {
             return vec![];
         };
         let playback = &mut self.state.voice_message;
         if let Some(playing) = playback
             .as_mut()
-            .filter(|playing| playing.item == item && playing.playing)
+            .filter(|playing| playing.item == item && playing.file == file && playing.playing)
         {
             playing.playing = false;
             return vec![Effect::Backend(Command::PauseVoiceMessage)];
@@ -382,19 +406,23 @@ impl Application {
         // Where it paused, when it's this one.
         let paused = playback
             .as_ref()
-            .filter(|paused| paused.item == item && paused.error.is_none())
-            .map(|paused| paused.position_ms);
+            .filter(|paused| paused.item == item && paused.file == file && paused.error.is_none());
+        let duration_ms = paused.and_then(|paused| paused.duration_ms);
+        let paused = paused.map(|paused| paused.position_ms);
         *playback = Some(chat::VoicePlayback {
             room: room.clone(),
             item: item.clone(),
+            file,
             loading: paused.is_none(),
             playing: true,
             position_ms: paused.unwrap_or(0),
+            duration_ms,
             error: None,
         });
         vec![Effect::Backend(Command::PlayVoiceMessage {
             room,
             item,
+            file,
             speakers: self.state.voice.speaker.clone(),
             tuning: self.state.voice_tuning,
         })]
@@ -414,6 +442,35 @@ impl Application {
         else {
             return vec![];
         };
+        self.move_recording(item, None, fraction, duration)
+    }
+
+    /// Moves an item's attached sound file `fraction` of the way through,
+    /// from 0 to 1, as its track is clicked or dragged, once its file said
+    /// how long it plays; as [`Self::move_voice_message`] moves a voice
+    /// message.
+    pub(super) fn move_sound(&mut self, item: String, index: usize, fraction: f32) -> Vec<Effect> {
+        let Some(duration) = self
+            .state
+            .voice_message
+            .as_ref()
+            .filter(|shown| shown.item == item && shown.file == Some(index))
+            .and_then(|shown| shown.duration_ms)
+        else {
+            return vec![];
+        };
+        self.move_recording(item, Some(index), fraction, duration)
+    }
+
+    /// Moves a voice message's recording, or with `file` an attached sound
+    /// file, `duration` long, `fraction` of the way through.
+    fn move_recording(
+        &mut self,
+        item: String,
+        file: Option<usize>,
+        fraction: f32,
+        duration: u64,
+    ) -> Vec<Effect> {
         let Some(room) = self.state.room_of(&item).cloned() else {
             return vec![];
         };
@@ -421,16 +478,18 @@ impl Application {
         let playback = &mut self.state.voice_message;
         match playback
             .as_mut()
-            .filter(|shown| shown.item == item && shown.error.is_none())
+            .filter(|shown| shown.item == item && shown.file == file && shown.error.is_none())
         {
             Some(shown) => shown.position_ms = at_ms,
             None => {
                 *playback = Some(chat::VoicePlayback {
                     room: room.clone(),
                     item: item.clone(),
+                    file,
                     loading: true,
                     playing: false,
                     position_ms: at_ms,
+                    duration_ms: file.map(|_| duration),
                     error: None,
                 });
             }
@@ -438,6 +497,7 @@ impl Application {
         vec![Effect::Backend(Command::MoveVoiceMessage {
             room,
             item,
+            file,
             at_ms,
             speakers: self.state.voice.speaker.clone(),
             tuning: self.state.voice_tuning,

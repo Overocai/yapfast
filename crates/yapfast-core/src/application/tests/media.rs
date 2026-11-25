@@ -192,6 +192,76 @@ fn a_voice_message_plays_and_pauses_one_at_a_time() {
 }
 
 #[test]
+fn a_sound_file_plays_in_its_card_and_moves_once_its_length_is_known() {
+    let mut app = connected();
+    let file = |name: &str| chat::Attachment {
+        name: name.into(),
+        size: None,
+        image: false,
+        dimensions: None,
+        preview: None,
+        preview_failed: false,
+        placement: chat::Placement::Message,
+        gif: None,
+        spoiler: false,
+        video: false,
+        url: None,
+        description: None,
+    };
+    assert!(file("Set.MP3").sound() && file("loop.flac").sound());
+    assert!(!file("notes.txt").sound() && !file("mp3").sound());
+    app.apply(Event::Timeline {
+        room: "dm".into(),
+        messages: timeline(vec![ChatMessage {
+            id: "1".into(),
+            item: "d:1".into(),
+            attachments: vec![file("notes.txt"), file("set.mp3")],
+            ..Default::default()
+        }]),
+    });
+    assert!(
+        app.dispatch(Action::ToggleSound("d:1".into(), 0))
+            .is_empty(),
+        "not a sound file"
+    );
+    assert!(matches!(
+        app.dispatch(Action::ToggleSound("d:1".into(), 1)).as_slice(),
+        [Effect::Backend(Command::PlayVoiceMessage { item, file: Some(1), .. })] if item == "d:1"
+    ));
+    assert!(
+        app.dispatch(Action::MoveSound("d:1".into(), 1, 0.5))
+            .is_empty(),
+        "its length isn't known yet"
+    );
+    let playing = app.state.voice_message.clone().unwrap();
+    assert_eq!((playing.file, playing.playing), (Some(1), true));
+    app.apply(Event::VoiceMessage(Some(chat::VoicePlayback {
+        loading: false,
+        duration_ms: Some(200_000),
+        ..playing
+    })));
+    assert!(matches!(
+        app.dispatch(Action::MoveSound("d:1".into(), 1, 0.5))
+            .as_slice(),
+        [Effect::Backend(Command::MoveVoiceMessage {
+            file: Some(1),
+            at_ms: 100_000,
+            ..
+        })]
+    ));
+    assert!(matches!(
+        app.dispatch(Action::ToggleSound("d:1".into(), 1))
+            .as_slice(),
+        [Effect::Backend(Command::PauseVoiceMessage)]
+    ));
+    let paused = app.state.voice_message.clone().unwrap();
+    assert_eq!(
+        (paused.playing, paused.position_ms, paused.duration_ms),
+        (false, 100_000, Some(200_000))
+    );
+}
+
+#[test]
 fn the_viewer_steps_through_a_messages_images() {
     let mut app = connected();
     let file = |name: &str, image: bool| chat::Attachment {

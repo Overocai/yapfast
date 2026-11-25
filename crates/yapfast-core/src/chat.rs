@@ -1846,6 +1846,27 @@ pub struct Attachment {
     pub description: Option<String>,
 }
 
+/// The file names' endings of the sound files that play in their card,
+/// as Discord's client plays audio attachments in place.
+const SOUND_FILES: [&str; 9] = [
+    "mp3", "ogg", "oga", "opus", "wav", "flac", "m4a", "aac", "weba",
+];
+
+impl Attachment {
+    /// A sound file that plays in its card ([`Command::PlayVoiceMessage`]
+    /// with its index), by its name's ending: an MP3, Ogg, WAV, FLAC or AAC
+    /// file, as Discord's client plays audio attachments in place.
+    pub fn sound(&self) -> bool {
+        !self.image
+            && !self.video
+            && self.name.rsplit_once('.').is_some_and(|(_, ending)| {
+                SOUND_FILES
+                    .iter()
+                    .any(|sound| ending.eq_ignore_ascii_case(sound))
+            })
+    }
+}
+
 /// What [`Command::Video`] tells the video playing.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum VideoCommand {
@@ -1902,16 +1923,23 @@ pub struct VoiceMessage {
     pub waveform: Arc<[u8]>,
 }
 
-/// The voice message playing, or paused, in the conversation view.
+/// The voice message playing, or paused, in the conversation view, or
+/// an attached sound file playing in its card.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct VoicePlayback {
     pub room: String,
     pub item: String,
+    /// The attached sound file it is, by its index in the item's
+    /// attachments ([`Attachment::sound`]); none for a voice message's
+    /// recording, its first.
+    pub file: Option<usize>,
     /// Until its file downloads.
     pub loading: bool,
     pub playing: bool,
     /// How far it has played, in milliseconds.
     pub position_ms: u64,
+    /// How long it plays, once its file opened and said.
+    pub duration_ms: Option<u64>,
     /// Why it stopped, for the person.
     pub error: Option<String>,
 }
@@ -2464,21 +2492,24 @@ pub enum Command {
     },
     /// Control the video playing.
     Video(VideoCommand),
-    /// Play a voice message's recording on `speakers`, from where it was
-    /// paused, or from the start in place of any other; it goes as
+    /// Play a voice message's recording on `speakers`, or with `file` the
+    /// item's attached sound file of that index, from where it was paused,
+    /// or from the start in place of any other; it goes as
     /// [`Event::VoiceMessage`].
     PlayVoiceMessage {
         room: String,
         item: String,
+        file: Option<usize>,
         speakers: Option<String>,
         tuning: VoiceTuning,
     },
-    /// Move a voice message to `at_ms` into its recording, playing or
-    /// paused as it was; in place of any other, it loads to wait there
-    /// paused on `speakers`.
+    /// Move a voice message, or an attached sound file, to `at_ms` into its
+    /// recording, playing or paused as it was; in place of any other, it
+    /// loads to wait there paused on `speakers`.
     MoveVoiceMessage {
         room: String,
         item: String,
+        file: Option<usize>,
         at_ms: u64,
         speakers: Option<String>,
         tuning: VoiceTuning,

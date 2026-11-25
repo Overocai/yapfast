@@ -252,6 +252,15 @@ pub fn message_content<'a>(
             content = content.push(crate::playback::voice_card(ctx, message, voice));
             continue;
         }
+        if attachment.sound() {
+            content = content.push(
+                container(crate::message::attachments::sound_card(
+                    ctx, message, index, attachment,
+                ))
+                .padding(Padding::ZERO.top(4)),
+            );
+            continue;
+        }
         content = content.push(
             container(crate::message::attachments::file_card(
                 ctx,
