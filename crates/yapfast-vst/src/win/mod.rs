@@ -279,6 +279,15 @@ pub fn process(samples: &mut [f32]) -> bool {
     }
 }
 
+pub fn warm() {
+    let kept = lock(&SHARED.folder)
+        .as_ref()
+        .is_some_and(|folder| folder.join(KEPT).is_file());
+    if kept && lock(&SHARED.thread).is_none() {
+        request(Request::Start, Box::new(|_| {}));
+    }
+}
+
 pub fn request(request: Request, done: Done) {
     let mut thread = lock(&SHARED.thread);
     if thread.is_none() {

@@ -289,6 +289,9 @@ impl App {
         layout.prefs.apply_clock();
         yapfast_core::discord::set_custom_games(&layout.prefs.game_executables);
         yapfast_core::discord::set_keywords(&layout.prefs.keyword_alerts);
+        // Where the voice effects are kept; they load once a call or
+        // Settings uses them.
+        yapfast_core::voice_effects::set_folder(client.root());
         client.share_typing = layout.prefs.share_typing.unwrap_or(true);
         // The window opens at its size in the desktop's pixels whatever the
         // zoom, and its layout gets fewer.

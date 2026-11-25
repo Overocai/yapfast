@@ -98,6 +98,7 @@ pub struct Plugin {
     view: RefCell<Option<(ComPtr<IPlugView>, ComWrapper<Frame>)>>,
     factory: ComPtr<IPluginFactory>,
     /// Released last, once everything of it is.
+    #[allow(dead_code, reason = "held so the library is freed after the plugin")]
     library: Library,
 }
 
@@ -739,7 +740,7 @@ impl IHostApplicationTrait for HostApp {
         }
         let written: Vec<u16> = "Yapfast".encode_utf16().chain(Some(0)).collect();
         // SAFETY: the plugin's 128 characters.
-        unsafe { (*name)[..written.len()].copy_from_slice(&written) };
+        unsafe { (&mut *name)[..written.len()].copy_from_slice(&written) };
         kResultOk
     }
 

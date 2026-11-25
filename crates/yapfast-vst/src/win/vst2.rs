@@ -155,6 +155,7 @@ pub struct Plugin {
     /// Frames processed, for the time it's told.
     frames: std::sync::atomic::AtomicU64,
     /// Freed last, once the plugin closed.
+    #[allow(dead_code, reason = "held so the library is freed after the plugin")]
     library: Library,
 }
 

@@ -10,6 +10,9 @@ use anyhow::Context;
 /// state themselves, as the UI's tests do.
 #[cfg(feature = "discord")]
 pub use yapfast_discord;
+/// VST2 and VST3 effects on the Discord microphone, which Settings arrange.
+#[cfg(feature = "discord")]
+pub use yapfast_vst as voice_effects;
 
 pub mod application;
 mod audio_io;

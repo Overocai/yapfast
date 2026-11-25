@@ -181,6 +181,8 @@ pub enum Drop {
     Start,
     /// A keybind's action, by its row.
     Keybind(usize),
+    /// The voice effects' plugin to add.
+    Effect,
 }
 
 /// Settings while open.
@@ -257,6 +259,8 @@ pub enum Event {
     /// My Account's and the Discord page's buttons.
     Account(pages::AccountEvent),
     Game(pages::GameEvent),
+    /// Voice & video's voice effects.
+    Effects(voice::Effects),
     /// Notifications' keyword alerts: one being written, added, removed.
     Keyword(pages::KeywordEvent),
     Voice(voice::Event),
@@ -320,15 +324,20 @@ impl Settings {
             self.end_mic_test(cx);
             self.voice = voice::Voice::default();
         }
+        let mut effects = Task::none();
         if section == Section::Voice && before != Some(Section::Voice) {
             self.enter_voice(cx);
+            effects = voice::look_for_effects();
         }
         cx.touch();
         // Another page starts at its top.
-        iced::widget::operation::snap_to(
-            iced::widget::Id::new(PAGE),
-            iced::widget::scrollable::RelativeOffset::START,
-        )
+        Task::batch([
+            effects,
+            iced::widget::operation::snap_to(
+                iced::widget::Id::new(PAGE),
+                iced::widget::scrollable::RelativeOffset::START,
+            ),
+        ])
     }
 
     pub fn update(&mut self, event: Event, cx: &mut Cx<'_>) -> Task<Message> {
@@ -368,6 +377,7 @@ impl Settings {
             Event::Game(event) => self.game_event(event, cx),
             Event::Keyword(event) => self.keyword_event(event, cx),
             Event::Voice(event) => self.voice_event(event, cx),
+            Event::Effects(event) => return self.effects_event(event, cx),
             Event::DesktopIcon(event) => return self.desktop_icon_event(event, cx),
             Event::ThemeKey(key) => return self.theme_key(key, cx),
             Event::Theme(event) => {

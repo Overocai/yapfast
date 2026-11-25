@@ -86,6 +86,14 @@ pub fn set_folder(dir: &Path) {
     let _ = dir;
 }
 
+/// Starts loading the chain kept, if one is and it hasn't started: as a
+/// call's microphone opens, so its effects run once they've loaded.
+/// Without one kept, nothing starts.
+pub fn warm() {
+    #[cfg(windows)]
+    win::warm();
+}
+
 /// Asks the chain's thread for `request`, starting it first; `done` is
 /// told on that thread once it's done.
 pub fn request(request: Request, done: Done) {

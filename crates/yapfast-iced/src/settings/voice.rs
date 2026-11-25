@@ -1,8 +1,9 @@
 //! Voice & video: the microphone, speakers and camera with their volumes
 //! and a camera's preview, how calls start and sound, noise suppression,
-//! the soundboard's volume and entrance sounds, and how the microphone is
-//! sent (voice activity with the gate's sensitivity, or push to talk with
-//! its key and release delay).
+//! the voice effects (VST plugins on the microphone, `yapfast_vst`), the
+//! soundboard's volume and entrance sounds, and how the microphone is sent
+//! (voice activity with the gate's sensitivity, or push to talk with its
+//! key and release delay).
 //!
 //! While it shows it may run three things, each gone when it's left: the
 //! camera being tried, the Discord gate's meter (while the gate's slider
@@ -10,7 +11,7 @@
 //! push-to-talk key's recording.
 
 use iced::{
-    Alignment, Color, Element, Length,
+    Alignment, Color, Element, Length, Task,
     widget::{column, container, row, text},
 };
 use yapfast_core::{
@@ -19,6 +20,7 @@ use yapfast_core::{
     noise::{Strength, Suppressor},
     picture::Feed,
     voice::Command,
+    voice_effects,
 };
 
 use super::{Drop, Event as SettingsEvent, Page, Settings};
@@ -71,6 +73,69 @@ pub struct Voice {
     /// Entrance sounds: the server chosen ("All servers" first), and the
     /// sounds to choose from while that list is open.
     pub entrance_server: usize,
+    /// Voice effects: the plugins installed (none until looked for), and
+    /// what the last change said, and whether it went wrong.
+    pub effects_found: Option<Vec<voice_effects::Found>>,
+    pub effects_note: Option<(String, bool)>,
+}
+
+/// What's done to the voice effects: the plugins found; looking again; one
+/// chosen to add, by its place among those found; one removed, moved up,
+/// bypassed or its editor opened, by its place's id; the chain on or off;
+/// and what a change said.
+#[derive(Clone, Debug)]
+pub enum Effects {
+    Found(Vec<voice_effects::Found>),
+    Rescan,
+    Add(usize),
+    Remove(u64),
+    Up(usize),
+    Bypass(u64, bool),
+    Edit(u64),
+    On(bool),
+    Done(Result<(), String>),
+}
+
+fn effects_message(event: Effects) -> Message {
+    crate::app::settings(SettingsEvent::Effects(event))
+}
+
+/// Asks the voice effects' thread for `request`, and says how it went.
+fn ask(request: voice_effects::Request) -> Task<Message> {
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    voice_effects::request(
+        request,
+        Box::new(move |result| {
+            let _ = sender.send(result);
+        }),
+    );
+    Task::perform(
+        async move {
+            receiver
+                .await
+                .unwrap_or_else(|_| Err("Yapfast's voice effects stopped.".into()))
+        },
+        |result| effects_message(Effects::Done(result)),
+    )
+}
+
+/// Looks for the plugins installed, off the window's thread, and loads the
+/// chain kept, as Voice shows.
+pub(super) fn look_for_effects() -> Task<Message> {
+    if !voice_effects::AVAILABLE {
+        return Task::none();
+    }
+    Task::batch([
+        Task::perform(
+            async {
+                tokio::task::spawn_blocking(|| voice_effects::scan(&[]))
+                    .await
+                    .unwrap_or_default()
+            },
+            |found| effects_message(Effects::Found(found)),
+        ),
+        ask(voice_effects::Request::Start),
+    ])
 }
 
 #[derive(Clone, Debug)]
@@ -99,6 +164,48 @@ pub enum Event {
 }
 
 impl Settings {
+    /// What's done to the voice effects.
+    pub(super) fn effects_event(&mut self, event: Effects, cx: &mut Cx<'_>) -> Task<Message> {
+        use voice_effects::Request;
+        cx.touch();
+        let request = match event {
+            Effects::Found(found) => {
+                self.voice.effects_found = Some(found);
+                return Task::none();
+            }
+            Effects::Rescan => {
+                self.voice.effects_found = None;
+                self.voice.effects_note = None;
+                return look_for_effects();
+            }
+            Effects::Add(index) => {
+                self.open = None;
+                let Some(found) = self
+                    .voice
+                    .effects_found
+                    .as_ref()
+                    .and_then(|found| found.get(index))
+                    .cloned()
+                else {
+                    return Task::none();
+                };
+                self.voice.effects_note = Some((format!("Loading {}...", found.name), false));
+                Request::Add(found)
+            }
+            Effects::Remove(id) => Request::Remove(id),
+            Effects::Up(at) if at > 0 => Request::Move(at, at - 1),
+            Effects::Up(_) => return Task::none(),
+            Effects::Bypass(id, bypassed) => Request::Bypass(id, bypassed),
+            Effects::Edit(id) => Request::Edit(id),
+            Effects::On(on) => Request::On(on),
+            Effects::Done(result) => {
+                self.voice.effects_note = result.err().map(|why| (why, true));
+                return Task::none();
+            }
+        };
+        ask(request)
+    }
+
     /// Voice shows: the devices are listed again, the entrance sounds
     /// asked for, and the gate's meter starts if its slider shows.
     pub(super) fn enter_voice(&mut self, cx: &mut Cx<'_>) {
@@ -378,6 +485,164 @@ impl Settings {
 }
 
 impl<'a> Page<'a> {
+    /// The voice effects: their switch, each plugin in the chain with what
+    /// can be done to it, the plugins installed to add, and what the last
+    /// change said.
+    fn voice_effects(self) -> Element<'a, Message> {
+        let theme = self.cx.look.theme;
+        let look = self.cx.look;
+        let mut parts = vec![form::heading(theme, "VOICE EFFECTS (VST)")];
+        if !voice_effects::AVAILABLE {
+            parts.push(form::note(theme, "VST plugins run on Windows."));
+            return form::group(parts);
+        }
+        let chain = voice_effects::view();
+        parts.push(
+            switch(
+                "Run your microphone through VST plugins",
+                chain.on,
+                Some(effects_message(Effects::On(!chain.on))),
+            )
+            .description("64-bit VST2 and VST3 effects, in the order below, on what Discord calls send and on the mic test, in stereo. A reverb's or a delay's tail rings on after you stop talking. Each plugin's editor opens in a window of its own, and what you change there is kept as you close it. A plugin that crashes takes Yapfast down with it; one that does as it loads starts off next time.")
+            .view(look),
+        );
+        let count = chain.slots.len();
+        for (at, slot) in chain.slots.iter().enumerate() {
+            let kind = if slot.vendor.is_empty() {
+                slot.format.label().to_owned()
+            } else {
+                format!("{} \u{b7} {}", slot.vendor, slot.format.label())
+            };
+            let mut words = column![
+                text(slot.name.clone())
+                    .size(15)
+                    .font(SEMIBOLD)
+                    .color(if slot.bypassed {
+                        theme.muted
+                    } else {
+                        theme.text
+                    })
+                    .wrapping(text::Wrapping::None),
+                text(if slot.bypassed {
+                    format!("{kind} \u{b7} bypassed")
+                } else {
+                    kind
+                })
+                .size(12)
+                .color(theme.muted),
+            ]
+            .spacing(2);
+            if let Some(failed) = &slot.failed {
+                words = words.push(text(failed.clone()).size(12).color(theme.danger));
+            }
+            let up = look
+                .icon_button(
+                    Icon::ChevronUp,
+                    if at > 0 { "Move up" } else { "" },
+                    (at > 0).then(|| effects_message(Effects::Up(at))),
+                )
+                .size(28.0, 16);
+            let mut line = row![up, container(words).width(Length::Fill).clip(true)]
+                .spacing(8)
+                .align_y(Alignment::Center);
+            if slot.editor {
+                line = line.push(
+                    action(
+                        theme,
+                        if slot.open { "Show" } else { "Edit" },
+                        Kind::Plain,
+                        Some(effects_message(Effects::Edit(slot.id))),
+                    )
+                    .small(),
+                );
+            }
+            line = line.push(
+                action(
+                    theme,
+                    if slot.bypassed { "Turn on" } else { "Bypass" },
+                    Kind::Plain,
+                    Some(effects_message(Effects::Bypass(slot.id, !slot.bypassed))),
+                )
+                .small(),
+            );
+            line = line.push(
+                look.icon_button(
+                    Icon::Trash,
+                    "Remove",
+                    effects_message(Effects::Remove(slot.id)),
+                )
+                .size(28.0, 16)
+                .danger(None),
+            );
+            let (ground, edge) = (theme.sidebar, theme.edge);
+            parts.push(
+                container(line)
+                    .padding([8, 10])
+                    .width(Length::Fill)
+                    .style(move |_| crate::style::outlined(ground, edge, 8.0))
+                    .into(),
+            );
+        }
+        if count == 0 {
+            parts.push(form::note(
+                theme,
+                "No plugins yet. Add one below, then open its editor to set it up.",
+            ));
+        }
+        let found = self.s.voice.effects_found.as_deref();
+        let mut options = vec![match found {
+            None => "Looking for plugins...".to_owned(),
+            Some([]) => "No VST plugins found".to_owned(),
+            Some(_) => "Choose a plugin to add".to_owned(),
+        }];
+        options.extend(found.into_iter().flatten().map(|plugin| {
+            let (name, format) = (&plugin.name, plugin.format.label());
+            match plugin.unusable {
+                Some(why) => format!("{name} \u{b7} {format} ({why})"),
+                None => format!("{name} \u{b7} {format}"),
+            }
+        }));
+        let open = self.s.open == Some(Drop::Effect);
+        let add = form::dropdown(
+            options,
+            Some(0),
+            open,
+            crate::app::settings(SettingsEvent::Drop(Drop::Effect)),
+            |index| {
+                if index == 0 {
+                    crate::app::settings(SettingsEvent::Drop(Drop::Effect))
+                } else {
+                    effects_message(Effects::Add(index - 1))
+                }
+            },
+        )
+        .enabled(found.is_some_and(|found| !found.is_empty()))
+        .view(look);
+        parts.push(
+            row![
+                container(add).width(Length::Fill),
+                action(
+                    theme,
+                    "Rescan",
+                    Kind::Plain,
+                    Some(effects_message(Effects::Rescan))
+                ),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center)
+            .into(),
+        );
+        match &self.s.voice.effects_note {
+            Some((note, true)) => parts.push(form::note_in(note.clone(), theme.danger)),
+            Some((note, false)) => parts.push(form::note(theme, note.clone())),
+            None => parts.push(form::note(
+                theme,
+                "Plugins are looked for where VST plugins install: Common Files\\VST3, VSTPlugins and the VST2 folders. FL Studio's own plugins run inside FL Studio VSTi, which loads here as an effect.",
+            )),
+        }
+        form::group(parts)
+    }
+
     pub(super) fn voice_page(self) -> Element<'a, Message> {
         let settings = self.s;
         let theme = self.cx.look.theme;
@@ -637,6 +902,7 @@ impl<'a> Page<'a> {
                 "How much of your microphone goes out each second. 128 kbps is plenty for a voice; music in stereo sounds best higher, up to 510. A call going on changes straight away.",
             ),
         ]));
+        parts.push(self.voice_effects());
         let state = self.cx.state;
         let board = settings.voice.soundboard.unwrap_or_else(|| {
             yapfast_core::volume::to_slider(state.soundboard_volume / 100.0)

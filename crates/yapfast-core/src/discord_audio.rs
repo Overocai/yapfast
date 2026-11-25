@@ -5,7 +5,9 @@
 //! gain control, Yapfast's leveling and the microphone's volume, and a gate
 //! that speech opens. In stereo, if asked, the processing hears the two
 //! channels' mix only to open the gate, and what the gate lets through goes
-//! out in both channels as the microphone heard it, at its volume.
+//! out in both channels as the microphone heard it, at its volume. The
+//! voice effects (VST plugins, [`yapfast_vst`]) run on what goes out, in
+//! stereo, and their tail rings on after the gate shuts while it's heard.
 use std::{
     collections::{HashMap, VecDeque},
     sync::{
@@ -480,7 +482,7 @@ impl GateMeter {
         let microphone = microphone.map(str::to_owned);
         // Keep capture independent of the speakers and bound preview latency.
         let playback = listen.then(|| {
-            let (send, receive) = mpsc::sync_channel::<[i16; BLOCK]>(4);
+            let (send, receive) = mpsc::sync_channel::<[i16; WIDE]>(4);
             let speaker = speaker.map(str::to_owned);
             let worker = shared.clone();
             let spawned = thread::Builder::new()
@@ -492,7 +494,7 @@ impl GateMeter {
                             speaker.as_deref(),
                             "Yapfast microphone test",
                             SAMPLE_RATE,
-                            1,
+                            2,
                             Some(Duration::from_millis(30)),
                         )?;
                         while !worker.stop.load(Ordering::Relaxed) {
@@ -587,6 +589,10 @@ const BLOCK: usize = SAMPLE_RATE as usize / 100;
 const _: () = assert!(BLOCK == crate::noise::BLOCK);
 /// A block of a stereo microphone, interleaved.
 const WIDE: usize = BLOCK * 2;
+/// How long the voice effects' tail (a reverb's, a delay's) may ring on
+/// after the gate shuts, in blocks, and how quiet ends it sooner: -60 dBFS.
+const TAIL_BLOCKS: usize = 300;
+const TAIL_FLOOR: f32 = 0.001;
 /// The blocks of a stereo microphone kept as read: those the gate keeps
 /// from before it opens, and a pair.
 const WIDE_KEPT: usize = BEFORE_OPENING + PAIR;
@@ -936,6 +942,19 @@ impl Wide {
     }
 }
 
+/// A mono block in both channels of an interleaved stereo one.
+fn spread(mono: &[f32; BLOCK], stereo: &mut [f32; WIDE]) {
+    for (pair, sample) in stereo.as_chunks_mut::<2>().0.iter_mut().zip(mono) {
+        pair.fill(*sample);
+    }
+}
+
+/// Whether a block of the effects' tail is still heard.
+fn rings(block: &[f32]) -> bool {
+    let energy: f32 = block.iter().map(|sample| sample * sample).sum();
+    (energy / block.len().max(1) as f32).sqrt() >= TAIL_FLOOR
+}
+
 /// The mix of an interleaved stereo block's two channels.
 fn mix_down(stereo: &[i16; WIDE], mono: &mut [i16; BLOCK]) {
     for (mixed, frame) in mono.iter_mut().zip(stereo.as_chunks::<2>().0) {
@@ -949,7 +968,7 @@ fn mix_down(stereo: &[i16; WIDE], mono: &mut [i16; BLOCK]) {
 fn measure(
     microphone: Option<&str>,
     shared: &MeterShared,
-    playback: Option<SyncSender<[i16; BLOCK]>>,
+    playback: Option<SyncSender<[i16; WIDE]>>,
 ) -> Result<()> {
     if playback.is_some() {
         crate::audio_io::raise_capture_priority();
@@ -959,6 +978,11 @@ fn measure(
     let mut stream = open_microphone(microphone, false)?;
     let mut processing = Processing::new(None);
     processing.preview = playback.is_some();
+    // The voice effects play back too, as a call would send them.
+    if playback.is_some() {
+        yapfast_vst::warm();
+    }
+    let mut wide = [0.0f32; WIDE];
     let mut blocks = [[0i16; BLOCK]; PAIR];
     let mut shown = f32::NEG_INFINITY;
     let mut silent = 0u32;
@@ -979,8 +1003,19 @@ fn measure(
         if let Some(playback) = &playback
             && !shared.stop.load(Ordering::Relaxed)
         {
+            let effects = yapfast_vst::active();
             for block in &blocks {
-                let _ = playback.try_send(*block);
+                for (pair, sample) in wide.as_chunks_mut::<2>().0.iter_mut().zip(block) {
+                    pair.fill(f32::from(*sample) / 32768.0);
+                }
+                if effects {
+                    yapfast_vst::process(&mut wide);
+                }
+                let mut played = [0i16; WIDE];
+                for (out, value) in played.iter_mut().zip(&wide) {
+                    *out = (value * 32768.0).clamp(-32768.0, 32767.0) as i16;
+                }
+                let _ = playback.try_send(played);
             }
         }
         shared.silent_blocks.store(silent, Ordering::Relaxed);
@@ -1043,7 +1078,11 @@ impl CaptureRequest {
                 return denoiser;
             }
         };
-        self.out.set_channels(if stereo { 2 } else { 1 });
+        // The voice effects kept load on their own thread, and run once
+        // they have; they go out in stereo.
+        yapfast_vst::warm();
+        let mut effects = yapfast_vst::active();
+        self.out.set_channels(if stereo || effects { 2 } else { 1 });
         // The way the switch asks for that wouldn't open, not tried again
         // until it changes.
         let mut refused = None;
@@ -1058,7 +1097,16 @@ impl CaptureRequest {
         let mut wide = Wide::new();
         let mut pace = Pace::default();
         let mut lightly = false;
+        // What goes out through the effects, and how long their tail may
+        // still ring; whether the track plays.
+        let mut effected = [0.0f32; WIDE];
+        let mut tail = 0;
+        let mut sending = false;
         while !self.stop.load(Ordering::Relaxed) {
+            if yapfast_vst::active() != effects {
+                effects = !effects;
+                self.out.set_channels(if stereo || effects { 2 } else { 1 });
+            }
             // Settings' switch opens the microphone again the other way.
             let wanted = self::stereo();
             if wanted == stereo {
@@ -1069,7 +1117,7 @@ impl CaptureRequest {
                         stream = opened;
                         stereo = wanted;
                         wide.clear();
-                        self.out.set_channels(if stereo { 2 } else { 1 });
+                        self.out.set_channels(if stereo || effects { 2 } else { 1 });
                         tracing::info!(stereo, "the Discord microphone opens again");
                     }
                     Err(error) => {
@@ -1095,25 +1143,54 @@ impl CaptureRequest {
                 processing.hear(block);
                 *time = (read - reading, read);
             }
-            let was_open = processing.gate.is_open();
             let sent = processing.pair(&mut blocks, lightly);
-            // The gate sends while it's open.
+            // The gate sends while it's open, and the effects' tail after.
             let open = !sent.is_empty();
-            if open != was_open {
-                self.talking.store(open, Ordering::Relaxed);
-                let _ = if open {
+            if open {
+                tail = TAIL_BLOCKS;
+            }
+            let ringing = !open && effects && tail > 0;
+            if (open || ringing) != sending {
+                sending = open || ringing;
+                self.talking.store(sending, Ordering::Relaxed);
+                let _ = if sending {
                     self.out.clear();
                     self.track.play()
                 } else {
                     self.track.pause()
                 };
             }
-            if stereo {
+            if open && stereo {
                 let volume = crate::volume::microphone();
-                wide.send(processing.sent_by, volume, |samples| self.out.push(samples));
-            } else {
+                wide.send(processing.sent_by, volume, |samples| {
+                    if effects {
+                        effected.copy_from_slice(samples);
+                        yapfast_vst::process(&mut effected);
+                        self.out.push(&effected);
+                    } else {
+                        self.out.push(samples);
+                    }
+                });
+            } else if open {
                 for samples in sent {
-                    self.out.push(samples);
+                    if effects {
+                        spread(samples, &mut effected);
+                        yapfast_vst::process(&mut effected);
+                        self.out.push(&effected);
+                    } else {
+                        self.out.push(samples);
+                    }
+                }
+            } else if ringing {
+                for _ in 0..PAIR {
+                    effected.fill(0.0);
+                    yapfast_vst::process(&mut effected);
+                    tail -= 1;
+                    if tail == 0 || !rings(&effected) {
+                        tail = 0;
+                        break;
+                    }
+                    self.out.push(&effected);
                 }
             }
             let [(first_read, first), (second_read, second)] = times;
