@@ -52,6 +52,32 @@ pub fn stereo() -> bool {
     STEREO.load(Ordering::Relaxed)
 }
 
+/// Whether this account hears its own microphone in Discord calls, as they
+/// send it (Hear Yourself), and how loud: a gain, by its bits.
+static MONITOR: AtomicBool = AtomicBool::new(false);
+static MONITOR_GAIN: AtomicU32 = AtomicU32::new(0x3f80_0000);
+
+/// Discord calls play what they send of the microphone back on their
+/// speakers, from their next pair of blocks, or stop.
+pub fn set_monitor(on: bool) {
+    MONITOR.store(on, Ordering::Relaxed);
+}
+
+pub fn monitor() -> bool {
+    MONITOR.load(Ordering::Relaxed)
+}
+
+/// How loud Hear Yourself plays, from 0 to 2 as its slider stands (1 at
+/// 100%), squared as the other volumes are.
+pub fn set_monitor_volume(volume: f32) {
+    let volume = volume.clamp(0.0, 2.0);
+    MONITOR_GAIN.store((volume * volume).to_bits(), Ordering::Relaxed);
+}
+
+fn monitor_gain() -> f32 {
+    f32::from_bits(MONITOR_GAIN.load(Ordering::Relaxed))
+}
+
 /// Someone counts as speaking for this long after their last loud frame.
 const SPEAKING_HOLD: Duration = Duration::from_millis(300);
 /// Frames quieter than this, in RMS dBFS, don't count as speech.
@@ -380,6 +406,8 @@ pub struct MicrophoneThread(Mutex<Option<mpsc::Sender<CaptureRequest>>>);
 /// What a capture needs, sent to the microphone thread.
 struct CaptureRequest {
     microphone: Option<String>,
+    /// The call's speakers, where Hear Yourself plays.
+    speaker: Option<String>,
     reverse: Reverse,
     out: Microphone,
     track: Track,
@@ -955,6 +983,105 @@ fn rings(block: &[f32]) -> bool {
     (energy / block.len().max(1) as f32).sqrt() >= TAIL_FLOOR
 }
 
+/// What a call sends of the microphone, played back on its speakers while
+/// Hear Yourself is on, through the voice effects as it goes out: on a
+/// thread of its own, which opens the speakers as it turns on and lets
+/// them go as it turns off, so the microphone never waits on them. A block
+/// the speakers aren't ready for is dropped.
+struct Monitor {
+    speaker: Option<String>,
+    queue: Option<SyncSender<[f32; WIDE]>>,
+    wide: [f32; WIDE],
+}
+
+impl Monitor {
+    fn new(speaker: Option<String>) -> Self {
+        Self {
+            speaker,
+            queue: None,
+            wide: [0.0; WIDE],
+        }
+    }
+
+    /// Turned off, the speakers go.
+    fn follow(&mut self) {
+        if !monitor() {
+            self.queue = None;
+        }
+    }
+
+    /// Plays an interleaved stereo block that went out.
+    fn play(&mut self, block: &[f32]) {
+        if !monitor() || block.len() != WIDE {
+            return;
+        }
+        if self.queue.is_none() {
+            self.queue = start_monitor(self.speaker.clone());
+        }
+        if let Some(queue) = &self.queue {
+            let mut wide = [0.0f32; WIDE];
+            wide.copy_from_slice(block);
+            if let Err(TrySendError::Disconnected(_)) = queue.try_send(wide) {
+                self.queue = None;
+            }
+        }
+    }
+
+    /// Plays a mono block that went out, in both channels.
+    fn play_mono(&mut self, mono: &[f32; BLOCK]) {
+        if !monitor() {
+            return;
+        }
+        let mut wide = std::mem::replace(&mut self.wide, [0.0; WIDE]);
+        spread(mono, &mut wide);
+        self.play(&wide);
+        self.wide = wide;
+    }
+}
+
+/// Hear Yourself's thread, playing what it's sent on `speaker` at its
+/// volume until its sender goes.
+fn start_monitor(speaker: Option<String>) -> Option<SyncSender<[f32; WIDE]>> {
+    let (send, receive) = mpsc::sync_channel::<[f32; WIDE]>(8);
+    let started = thread::Builder::new()
+        .name("yapfast-hear-yourself".into())
+        .spawn(move || {
+            crate::audio_io::raise_thread_priority("hear-yourself");
+            let output = crate::audio_io::Output::<f32>::open_or_default(
+                speaker.as_deref(),
+                "Yapfast hear yourself",
+                SAMPLE_RATE,
+                2,
+                Some(Duration::from_millis(30)),
+            );
+            let mut output = match output {
+                Ok(output) => output,
+                Err(error) => {
+                    tracing::warn!(
+                        error = format!("{error:#}"),
+                        "Hear Yourself couldn't open the speakers"
+                    );
+                    return;
+                }
+            };
+            while let Ok(mut block) = receive.recv() {
+                let gain = monitor_gain();
+                for sample in &mut block {
+                    *sample = (*sample * gain).clamp(-1.0, 1.0);
+                }
+                if output.write(&block).is_err() {
+                    break;
+                }
+            }
+            output.flush();
+        });
+    if let Err(error) = started {
+        tracing::warn!(%error, "could not start Hear Yourself");
+        return None;
+    }
+    Some(send)
+}
+
 /// The mix of an interleaved stereo block's two channels.
 fn mix_down(stereo: &[i16; WIDE], mono: &mut [i16; BLOCK]) {
     for (mixed, frame) in mono.iter_mut().zip(stereo.as_chunks::<2>().0) {
@@ -1034,7 +1161,7 @@ fn measure(
 /// otherwise, so Discord shows speaking only during speech.
 pub fn capture(
     thread: &MicrophoneThread,
-    microphone: Option<&str>,
+    (microphone, speaker): (Option<&str>, Option<&str>),
     reverse: Reverse,
     out: Microphone,
     track: Track,
@@ -1044,6 +1171,7 @@ pub fn capture(
     let talking = Arc::new(AtomicBool::new(false));
     thread.start(CaptureRequest {
         microphone: microphone.map(str::to_owned),
+        speaker: speaker.map(str::to_owned),
         reverse,
         out,
         track: track.clone(),
@@ -1102,7 +1230,9 @@ impl CaptureRequest {
         let mut effected = [0.0f32; WIDE];
         let mut tail = 0;
         let mut sending = false;
+        let mut monitor = Monitor::new(self.speaker.clone());
         while !self.stop.load(Ordering::Relaxed) {
+            monitor.follow();
             if yapfast_vst::active() != effects {
                 effects = !effects;
                 self.out.set_channels(if stereo || effects { 2 } else { 1 });
@@ -1167,8 +1297,10 @@ impl CaptureRequest {
                         effected.copy_from_slice(samples);
                         yapfast_vst::process(&mut effected);
                         self.out.push(&effected);
+                        monitor.play(&effected);
                     } else {
                         self.out.push(samples);
+                        monitor.play(samples);
                     }
                 });
             } else if open {
@@ -1177,8 +1309,10 @@ impl CaptureRequest {
                         spread(samples, &mut effected);
                         yapfast_vst::process(&mut effected);
                         self.out.push(&effected);
+                        monitor.play(&effected);
                     } else {
                         self.out.push(samples);
+                        monitor.play_mono(samples);
                     }
                 }
             } else if ringing {
@@ -1191,6 +1325,7 @@ impl CaptureRequest {
                         break;
                     }
                     self.out.push(&effected);
+                    monitor.play(&effected);
                 }
             }
             let [(first_read, first), (second_read, second)] = times;

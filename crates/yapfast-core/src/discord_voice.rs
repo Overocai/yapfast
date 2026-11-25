@@ -1127,7 +1127,7 @@ fn open_discord_microphone(
     let open = |id: Option<&str>| {
         discord_audio::capture(
             thread,
-            id,
+            (id, state.speaker.as_deref()),
             reverse.clone(),
             microphone.clone(),
             track.clone(),

@@ -385,6 +385,11 @@ pub struct Voice {
     /// kbit/s: mono at 128 unless changed.
     pub stereo_microphone: bool,
     pub voice_bitrate: Option<u32>,
+    /// Discord calls play what they send of the microphone back on their
+    /// speakers (Hear Yourself), at this volume in percent: off, at 100
+    /// unless changed.
+    pub hear_yourself: bool,
+    pub hear_yourself_volume: Option<u32>,
     /// The quietest speech Discord calls send, in dBFS.
     pub input_sensitivity: Option<i32>,
     /// Push to talk, its keybind and its release delay in ms.
@@ -434,6 +439,10 @@ impl Voice {
         yapfast_core::discord_audio::set_bitrate(
             self.voice_bitrate
                 .unwrap_or(yapfast_core::discord_audio::DEFAULT_BITRATE),
+        );
+        yapfast_core::discord_audio::set_monitor(self.hear_yourself);
+        yapfast_core::discord_audio::set_monitor_volume(
+            self.hear_yourself_volume.unwrap_or(100).min(200) as f32 / 100.0,
         );
         let sensitivity = self
             .input_sensitivity

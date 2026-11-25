@@ -154,6 +154,10 @@ pub enum Event {
     /// it's the drag's last.
     Stereo(bool),
     Bitrate(u32, bool),
+    /// Hear Yourself in calls, and its volume in percent with whether it's
+    /// the drag's last.
+    HearYourself(bool),
+    HearVolume(u32, bool),
     Noise(usize),
     Strength(usize),
     InputMode(usize),
@@ -390,6 +394,20 @@ impl Settings {
                 yapfast_core::discord_audio::set_stereo(on);
                 crate::layout::store(&root, "stereo_microphone", on);
             }
+            Event::HearYourself(on) => {
+                voice.hear_yourself = on;
+                yapfast_core::discord_audio::set_monitor(on);
+                crate::layout::store(&root, "hear_yourself", on);
+            }
+            Event::HearVolume(value, done) => {
+                let value = value.min(200);
+                voice.hear_yourself_volume = Some(value);
+                yapfast_core::discord_audio::set_monitor_volume(value as f32 / 100.0);
+                if done {
+                    crate::layout::store(&root, "hear_yourself_volume", value);
+                }
+                return;
+            }
             Event::Bitrate(value, done) => {
                 use yapfast_core::discord_audio::{LEAST_BITRATE, MOST_BITRATE};
                 let kbps = value.clamp(LEAST_BITRATE, MOST_BITRATE);
@@ -507,6 +525,26 @@ impl<'a> Page<'a> {
             .description("64-bit VST2 and VST3 effects, in the order below, on what Discord calls send and on the mic test, in stereo. A reverb's or a delay's tail rings on after you stop talking. Each plugin's editor opens in a window of its own, and what you change there is kept as you close it. A plugin that crashes takes Yapfast down with it; one that does as it loads starts off next time.")
             .view(look),
         );
+        let hear = self.cx.layout.voice.hear_yourself;
+        parts.push(
+            switch(
+                "Hear yourself in Discord calls",
+                hear,
+                Some(voice_message(Event::HearYourself(!hear))),
+            )
+            .description("Plays your microphone back on your speakers as calls send it, through these effects, while you talk: the same as the effects button's Hear Yourself. Wear headphones, or it echoes.")
+            .view(look),
+        );
+        if hear {
+            let volume = self.cx.layout.voice.hear_yourself_volume.unwrap_or(100);
+            parts.push(
+                slider("Hear yourself volume", volume, 200, |value| {
+                    voice_message(Event::HearVolume(value, false))
+                })
+                .on_release(voice_message(Event::HearVolume(volume, true)))
+                .view(theme),
+            );
+        }
         let count = chain.slots.len();
         for (at, slot) in chain.slots.iter().enumerate() {
             let kind = if slot.vendor.is_empty() {

@@ -50,9 +50,12 @@ The call's views and what they do are in `call/`.
   when let go, and Voice Settings.
 - Beside it on Windows, the voice effects' button, in the accent while a
   VST plugin runs on the microphone, opens their menu
-  (`call/popups/effects.rs`): Voice Effects on or off, each plugin with a
-  box that runs or bypasses it (Didn't load where it failed) and a pencil
-  that opens its editor, and Voice Settings, where plugins are added. The
+  (`call/popups/effects.rs`): Voice Effects on or off, with what that comes
+  to; Hear Yourself, with its volume from 0 to 200% while it's on (see
+  [Voice](../voice.md#hear-yourself)); under PLUGINS each plugin with a dot
+  for how it stands (green running, grey bypassed, red failed to load), its
+  vendor and format, a box that runs or bypasses it and Edit (Show while
+  its editor is open); and Voice Settings, where plugins are added. The
   chain kept loads as the menu opens, and the menu reads it again as each
   change is done.
 - The device menus (`call/popups/`: the device menus, the share menu,

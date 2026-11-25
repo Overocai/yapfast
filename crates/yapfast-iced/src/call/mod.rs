@@ -175,6 +175,10 @@ pub enum Event {
     EffectBypass(u64, bool),
     EffectEdit(u64),
     EffectsDone(Result<(), String>),
+    /// Hear Yourself on or off, and its volume in percent with whether
+    /// it's the drag's last.
+    HearYourself(bool),
+    HearVolume(u32, bool),
     /// A soundboard sound played for everyone, heard here first, or starred.
     Play(String),
     Preview(String),
@@ -336,6 +340,14 @@ pub fn update(app: &mut App, event: Event) -> Task<Message> {
         }
         // The menu and the button read the chain as they're drawn again.
         Event::EffectsDone(_) => return Task::none(),
+        Event::HearYourself(on) => {
+            crate::call::popups::effects::hear_yourself(app, on);
+            return Task::none();
+        }
+        Event::HearVolume(value, done) => {
+            crate::call::popups::effects::hear_volume(app, value, done);
+            return Task::none();
+        }
         Event::Play(sound) => Action::Voice(Command::Soundboard(sound)),
         Event::Preview(sound) => Action::Voice(Command::PreviewSound(sound)),
         Event::Favorite(sound, on) => Action::Voice(Command::FavoriteSound(sound, on)),

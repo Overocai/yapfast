@@ -111,6 +111,21 @@ process, so one that crashes takes Yapfast with it.
 loads a plugin alone, runs a second of a tone through it, puts its state
 back and opens its editor; with no path it lists the plugins found.
 
+## Hear Yourself
+
+With Hear Yourself on (the voice effects' menu, or Settings › Voice & video,
+kept in `layout.json` as `hear_yourself` and `hear_yourself_volume`), a
+Discord call plays what it sends of the microphone back on the call's
+speakers, as it goes out: after Yapfast's processing and the voice effects,
+their tail included, and only while the gate or push to talk lets it out.
+It plays on a stream of its own, `yapfast-hear-yourself`, which opens the
+speakers as it turns on and lets them go as it turns off, with 30 ms
+queued; a block the speakers aren't ready for is dropped, so the
+microphone never waits on them. It doesn't go through the call's own
+speakers, whose sound the echo cancellation takes as the far end and would
+take out of the microphone. Its volume goes from 0 to 200%, squared as the
+others are. Wear headphones, or it echoes into the microphone.
+
 ## Cameras
 
 Settings › Voice & video chooses the camera, beside the microphone and
