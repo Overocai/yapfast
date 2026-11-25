@@ -169,7 +169,7 @@ unsafe impl Sync for Plugin {}
 impl Plugin {
     /// Loads and opens the plugin at `path`, at Yapfast's rate, resumed.
     pub fn load(path: &Path) -> Result<Self> {
-        let mut plugin = Self::open(Library::load(path)?)?;
+        let plugin = Self::open(Library::load(path)?)?;
         plugin.resume();
         Ok(plugin)
     }
