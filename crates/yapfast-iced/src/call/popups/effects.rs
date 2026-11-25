@@ -114,7 +114,7 @@ pub(super) fn effects_menu<'a>(ctx: crate::ctx::Ctx<'a>) -> Element<'a, Message>
                 })
                 .on_release(Message::Call(Event::HearVolume(volume, true)))
                 .view(theme),
-                text("Wear headphones, or it echoes. You hear yourself only while you talk in a call.")
+                text("Wear headphones, or it echoes. In a call you hear yourself as you talk, muted too.")
                     .size(12)
                     .color(theme.muted),
             ]

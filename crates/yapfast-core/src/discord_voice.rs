@@ -485,6 +485,8 @@ pub(crate) async fn call(
         let mut ticks = tokio::time::interval(Duration::from_millis(150));
         ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut volumes = crate::volume::changes();
+        // Hear Yourself's microphone wouldn't open while muted.
+        let mut unheard = false;
         // The voice connection dropped, and the call ends when `lost` comes
         // unless Discord says it moved the call meanwhile.
         let mut dropped = false;
@@ -565,13 +567,39 @@ pub(crate) async fn call(
                     .then(|| Ringer::start(Tone::Outgoing, state.speaker.as_deref()))
                     .and_then(|started| started.inspect_err(|error| tracing::warn!(%error, "could not play the ringback")).ok());
             }
+            // Muted, Hear Yourself keeps the microphone open to play it back,
+            // sending the call none of it; deafened, or with it off, the
+            // microphone closes. One that won't open isn't tried again until
+            // either changes.
+            let listening = state.muted && !state.deafened && discord_audio::monitor();
+            if !listening {
+                unheard = false;
+                if state.muted {
+                    capture = None;
+                }
+            } else if capture.is_none() && !unheard {
+                match open_discord_microphone(state, true, &reverse, &microphone, &track, &microphone_thread) {
+                    Ok(opened) => capture = Some(opened),
+                    Err(error) => {
+                        tracing::warn!(error = format!("{error:#}"), "Hear Yourself couldn't open the microphone while muted");
+                        unheard = true;
+                    }
+                }
+            }
             tokio::select! {
                 command = commands.recv() => {
                     match command {
                         None | Some(Command::Leave) => break,
                         Some(Command::Join(_)) => state.error = Some("Leave your current voice channel before joining another.".into()),
                         Some(Command::Mute(true)) => {
-                            capture = None;
+                            // With Hear Yourself on, the microphone stays open for it alone.
+                            if discord_audio::monitor() {
+                                if let Some(open) = &capture {
+                                    open.set_muted(true);
+                                }
+                            } else {
+                                capture = None;
+                            }
                             state.muted = true;
                             state.unmute_on_undeafen = false;
                         }
@@ -586,7 +614,15 @@ pub(crate) async fn call(
                                 Watch::hear(&mut watch, true);
                             }
                             if unmute {
-                                match open_discord_microphone(state, &reverse, &microphone, &track, &microphone_thread) {
+                                // Open for Hear Yourself already, the microphone sends again.
+                                let opened = match capture.take() {
+                                    Some(open) => {
+                                        open.set_muted(false);
+                                        Ok(open)
+                                    }
+                                    None => open_discord_microphone(state, false, &reverse, &microphone, &track, &microphone_thread),
+                                };
+                                match opened {
                                     Ok(opened) => {
                                         capture = Some(opened);
                                         state.muted = false;
@@ -613,7 +649,7 @@ pub(crate) async fn call(
                             state.microphone = Some(id);
                             Chosen::write(remembered, state);
                             if capture.take().is_some() {
-                                match open_discord_microphone(state, &reverse, &microphone, &track, &microphone_thread) {
+                                match open_discord_microphone(state, state.muted, &reverse, &microphone, &track, &microphone_thread) {
                                     Ok(opened) => capture = Some(opened),
                                     Err(_) => {
                                         state.muted = true;
@@ -1116,9 +1152,11 @@ fn open_discord_speakers(
     Ok(speakers)
 }
 
-/// Opens the chosen microphone, or the system default if it's gone.
+/// Opens the chosen microphone, or the system default if it's gone;
+/// `muted`, for Hear Yourself alone.
 fn open_discord_microphone(
     state: &State,
+    muted: bool,
     reverse: &discord_audio::Reverse,
     microphone: &yapfast_discord::voice::Microphone,
     track: &yapfast_discord::voice::Track,
@@ -1131,6 +1169,7 @@ fn open_discord_microphone(
             reverse.clone(),
             microphone.clone(),
             track.clone(),
+            muted,
         )
     };
     match open(state.microphone.as_deref()) {

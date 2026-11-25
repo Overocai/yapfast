@@ -413,6 +413,8 @@ struct CaptureRequest {
     track: Track,
     stop: Arc<AtomicBool>,
     talking: Arc<AtomicBool>,
+    /// Muted, the call gets none of it, and Hear Yourself alone plays it.
+    muted: Arc<AtomicBool>,
     opened: mpsc::SyncSender<Result<()>>,
 }
 
@@ -452,6 +454,7 @@ impl MicrophoneThread {
 pub struct Capture {
     stop: Arc<AtomicBool>,
     talking: Arc<AtomicBool>,
+    muted: Arc<AtomicBool>,
     track: Track,
 }
 
@@ -459,6 +462,12 @@ impl Capture {
     /// Whether the voice gate is open: the microphone hears speech.
     pub fn talking(&self) -> bool {
         self.talking.load(Ordering::Relaxed)
+    }
+
+    /// Muted, the call gets none of the microphone, which plays on only to
+    /// Hear Yourself; unmuted, it's sent again from the next block.
+    pub fn set_muted(&self, muted: bool) {
+        self.muted.store(muted, Ordering::Relaxed);
     }
 }
 
@@ -1158,17 +1167,20 @@ fn measure(
 
 /// Opens the microphone on `thread` and sends its processed audio while
 /// someone talks: the track plays while the gate is open and pauses
-/// otherwise, so Discord shows speaking only during speech.
+/// otherwise, so Discord shows speaking only during speech. Opened `muted`,
+/// for Hear Yourself, it sends nothing until it's unmuted.
 pub fn capture(
     thread: &MicrophoneThread,
     (microphone, speaker): (Option<&str>, Option<&str>),
     reverse: Reverse,
     out: Microphone,
     track: Track,
+    muted: bool,
 ) -> Result<Capture> {
     let (opened, result) = mpsc::sync_channel(1);
     let stop = Arc::new(AtomicBool::new(false));
     let talking = Arc::new(AtomicBool::new(false));
+    let muted = Arc::new(AtomicBool::new(muted));
     thread.start(CaptureRequest {
         microphone: microphone.map(str::to_owned),
         speaker: speaker.map(str::to_owned),
@@ -1177,6 +1189,7 @@ pub fn capture(
         track: track.clone(),
         stop: stop.clone(),
         talking: talking.clone(),
+        muted: muted.clone(),
         opened,
     })?;
     result
@@ -1186,6 +1199,7 @@ pub fn capture(
     Ok(Capture {
         stop,
         talking,
+        muted,
         track,
     })
 }
@@ -1274,14 +1288,17 @@ impl CaptureRequest {
                 *time = (read - reading, read);
             }
             let sent = processing.pair(&mut blocks, lightly);
-            // The gate sends while it's open, and the effects' tail after.
+            // The gate sends while it's open, and the effects' tail after;
+            // muted, only Hear Yourself plays them.
+            let muted = self.muted.load(Ordering::Relaxed);
             let open = !sent.is_empty();
             if open {
                 tail = TAIL_BLOCKS;
             }
             let ringing = !open && effects && tail > 0;
-            if (open || ringing) != sending {
-                sending = open || ringing;
+            let sends = (open || ringing) && !muted;
+            if sends != sending {
+                sending = sends;
                 self.talking.store(sending, Ordering::Relaxed);
                 let _ = if sending {
                     self.out.clear();
@@ -1296,10 +1313,14 @@ impl CaptureRequest {
                     if effects {
                         effected.copy_from_slice(samples);
                         yapfast_vst::process(&mut effected);
-                        self.out.push(&effected);
+                        if !muted {
+                            self.out.push(&effected);
+                        }
                         monitor.play(&effected);
                     } else {
-                        self.out.push(samples);
+                        if !muted {
+                            self.out.push(samples);
+                        }
                         monitor.play(samples);
                     }
                 });
@@ -1308,10 +1329,14 @@ impl CaptureRequest {
                     if effects {
                         spread(samples, &mut effected);
                         yapfast_vst::process(&mut effected);
-                        self.out.push(&effected);
+                        if !muted {
+                            self.out.push(&effected);
+                        }
                         monitor.play(&effected);
                     } else {
-                        self.out.push(samples);
+                        if !muted {
+                            self.out.push(samples);
+                        }
                         monitor.play_mono(samples);
                     }
                 }
@@ -1324,7 +1349,9 @@ impl CaptureRequest {
                         tail = 0;
                         break;
                     }
-                    self.out.push(&effected);
+                    if !muted {
+                        self.out.push(&effected);
+                    }
                     monitor.play(&effected);
                 }
             }

@@ -118,7 +118,10 @@ kept in `layout.json` as `hear_yourself` and `hear_yourself_volume`), a
 Discord call plays what it sends of the microphone back on the call's
 speakers, as it goes out: after Yapfast's processing and the voice effects,
 their tail included, and only while the gate or push to talk lets it out.
-It plays on a stream of its own, `yapfast-hear-yourself`, which opens the
+Muted, it plays on: the microphone stays open for it, sending the call
+nothing (`Capture::set_muted`), and closes as Hear Yourself turns off or the
+call is deafened, as muting closes it without Hear Yourself. It plays on a
+stream of its own, `yapfast-hear-yourself`, which opens the
 speakers as it turns on and lets them go as it turns off, with 30 ms
 queued; a block the speakers aren't ready for is dropped, so the
 microphone never waits on them. It doesn't go through the call's own

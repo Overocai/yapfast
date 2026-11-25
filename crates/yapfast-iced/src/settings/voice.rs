@@ -11,7 +11,7 @@
 //! push-to-talk key's recording.
 
 use iced::{
-    Alignment, Color, Element, Length, Task,
+    Alignment, Color, Element, Length, Padding, Task,
     widget::{column, container, row, text},
 };
 use yapfast_core::{
@@ -34,6 +34,7 @@ use crate::{
     layout::InputMode,
     pictures::Icon,
     video::Video,
+    widgets::scroll_view,
 };
 
 /// The camera's preview: its key among the window's video sources, and the
@@ -81,10 +82,10 @@ pub struct Voice {
     pub effects_query: String,
 }
 
-/// The search for a plugin to add: its field's id, and how many plugins it
-/// lists at once.
+/// The search for a plugin to add: its field's id, and the most room the
+/// list under it takes before it scrolls.
 const EFFECTS_SEARCH: &str = "settings-effects-search";
-const EFFECTS_SHOWN: usize = 8;
+const EFFECTS_LIST: f32 = 340.0;
 
 /// What's done to the voice effects: the plugins found; looking again; one
 /// chosen to add, by its place among those found; one removed, moved up,
@@ -544,7 +545,7 @@ impl<'a> Page<'a> {
                 hear,
                 Some(voice_message(Event::HearYourself(!hear))),
             )
-            .description("Plays your microphone back on your speakers as calls send it, through these effects, while you talk: the same as the effects button's Hear Yourself. Wear headphones, or it echoes.")
+            .description("Plays your microphone back on your speakers as calls send it, through these effects, while you talk, muted too: the same as the effects button's Hear Yourself. Wear headphones, or it echoes.")
             .view(look),
         );
         if hear {
@@ -672,13 +673,28 @@ impl<'a> Page<'a> {
             )),
             Some(found) => {
                 let hits = voice_effects::search(found, query);
-                if hits.is_empty() {
-                    parts.push(form::note(
-                        theme,
-                        format!("No plugin matches \u{201c}{}\u{201d}.", query.trim()),
-                    ));
-                }
-                for &(at, plugin) in hits.iter().take(EFFECTS_SHOWN) {
+                let plugins = |count: usize| match count {
+                    1 => "1 plugin".to_owned(),
+                    count => format!("{count} plugins"),
+                };
+                parts.push(form::note(
+                    theme,
+                    match (query.trim(), hits.len()) {
+                        ("", count) => {
+                            format!(
+                                "{} installed. Type above to narrow the list.",
+                                plugins(count)
+                            )
+                        }
+                        (typed, 0) => format!("No plugin matches \u{201c}{typed}\u{201d}."),
+                        (typed, count) => format!(
+                            "{count} of {} match \u{201c}{typed}\u{201d}.",
+                            plugins(found.len())
+                        ),
+                    },
+                ));
+                let mut list = column![].spacing(6).padding(Padding::ZERO.right(12));
+                for &(at, plugin) in &hits {
                     let added = chain
                         .slots
                         .iter()
@@ -711,7 +727,7 @@ impl<'a> Page<'a> {
                     )
                     .small();
                     let (ground, edge) = (theme.sidebar, theme.edge);
-                    parts.push(
+                    list = list.push(
                         container(
                             row![container(words).width(Length::Fill).clip(true), add]
                                 .spacing(8)
@@ -719,18 +735,19 @@ impl<'a> Page<'a> {
                         )
                         .padding([6, 10])
                         .width(Length::Fill)
-                        .style(move |_| crate::style::outlined(ground, edge, 8.0))
-                        .into(),
+                        .style(move |_| crate::style::outlined(ground, edge, 8.0)),
                     );
                 }
-                if hits.len() > EFFECTS_SHOWN {
-                    parts.push(form::note(
-                        theme,
-                        format!(
-                            "{} more. Type to narrow them down.",
-                            hits.len() - EFFECTS_SHOWN
-                        ),
-                    ));
+                if !hits.is_empty() {
+                    parts.push(
+                        container(
+                            scroll_view(list)
+                                .height(Length::Shrink)
+                                .style(crate::style::scrollbar(theme)),
+                        )
+                        .max_height(EFFECTS_LIST)
+                        .into(),
+                    );
                 }
             }
         }

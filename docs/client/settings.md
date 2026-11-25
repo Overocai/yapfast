@@ -37,12 +37,13 @@ recording. Each change is kept at once in
   225); then the voice effects (VST plugins on the microphone, see
   [Voice](../voice.md#voice-effects)): their switch, each plugin in the chain
   with Move up, Edit (Show while its editor is open), Bypass or Turn on and
-  Remove, why one didn't load in red; Add a plugin, a field that finds the
-  plugins installed as it's typed in (`yapfast_vst::search`: a name starting
-  with it first, then one holding it, then each word among the name, the
-  format and the maker's folder), eight at a time, each with its format and
-  maker and Add (Added once in the chain, greyed with the reason for one
-  that can't load), and Rescan; and what the last change said. The plugins
+  Remove, why one didn't load in red; Add a plugin, every plugin installed
+  in a list that scrolls past 340 px, which the field over it narrows as
+  it's typed in (`yapfast_vst::search`: a name starting with it first, then
+  one holding it, then each word among the name, the format and the maker's
+  folder), with how many there are or match, each with its format and maker
+  and Add (Added once in the chain, greyed with the reason for one that
+  can't load), and Rescan; and what the last change said. The plugins
   are looked for and the kept chain loaded as Voice shows. Then joining unmuted, evening out the voice, and in Discord calls
   noise suppression and its strength, sending the microphone in stereo and
   its bit rate (as the account card's bitrate menu has them), the soundboard's volume (Discord
