@@ -126,7 +126,7 @@ impl Scratch {
 /// A plugin of either format.
 pub enum Plugin {
     Vst2(vst2::Plugin),
-    Vst3(vst3::Plugin),
+    Vst3(Box<vst3::Plugin>),
 }
 
 impl Plugin {
@@ -512,7 +512,7 @@ impl Host {
             return;
         }
         self.started = true;
-        self.folder = lock(&SHARED.folder).clone();
+        self.folder.clone_from(&lock(&SHARED.folder));
         let kept = self.read();
         self.on = kept.on;
         let crashed = self.loading();
@@ -598,7 +598,7 @@ impl Host {
                 let state = state.as_deref().map(|state| (state, controller.as_slice()));
                 vst3::Plugin::load(&kept.path, class, state).map(|plugin| {
                     kept.class = Some(vst3::class_hex(&plugin.class));
-                    Plugin::Vst3(plugin)
+                    Plugin::Vst3(Box::new(plugin))
                 })
             }
         };
@@ -607,10 +607,10 @@ impl Host {
             Ok(plugin) => {
                 let (name, vendor) = plugin.names();
                 if !name.is_empty() {
-                    kept.name = name.to_owned();
+                    name.clone_into(&mut kept.name);
                 }
                 if !vendor.is_empty() {
-                    kept.vendor = vendor.to_owned();
+                    vendor.clone_into(&mut kept.vendor);
                 }
                 entry.loaded = Some(Arc::new(Loaded {
                     plugin,
@@ -944,7 +944,9 @@ pub fn probe(path: &Path, format: Format, editor: Option<Duration>) -> String {
     let started = Instant::now();
     let loaded = match format {
         Format::Vst2 => vst2::Plugin::load(path).map(Plugin::Vst2),
-        Format::Vst3 => vst3::Plugin::load(path, None, None).map(Plugin::Vst3),
+        Format::Vst3 => {
+            vst3::Plugin::load(path, None, None).map(|plugin| Plugin::Vst3(Box::new(plugin)))
+        }
     };
     let plugin = match loaded {
         Ok(plugin) => plugin,

@@ -84,8 +84,9 @@ a 32-bit plugin is listed as one Yapfast can't load. A plugin added loads
 there and then: VST2 through its binary interface (`VSTPluginMain`), VST3
 through Steinberg's interfaces (the `vst3` crate, MIT bindings of the SDK),
 its first audio class that isn't an instrument. One that takes no sound in
-is refused; an instrument that does, such as FL Studio VSTi, whose own
-mixer can host FL's native plugins, runs as an effect does.
+is refused, as FL Studio VSTi is: it takes none, so FL Studio's native
+plugins can't run through it. An instrument that takes sound in, such as a
+vocoder, runs as an effect does.
 
 The plugins live on a thread of their own, their UI thread: it loads them,
 opens their editors in windows of its own with a timer for VST2 editors'

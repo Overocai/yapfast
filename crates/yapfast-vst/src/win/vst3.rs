@@ -977,8 +977,8 @@ impl IBStreamTrait for Stream {
             // SAFETY: the plugin's buffer of `bytes`, and ours of `count`
             // from `at`.
             unsafe {
-                std::ptr::copy_nonoverlapping(data.as_ptr().add(at), buffer.cast::<u8>(), count)
-            };
+                std::ptr::copy_nonoverlapping(data.as_ptr().add(at), buffer.cast::<u8>(), count);
+            }
         }
         self.at.set(at + count);
         if !read.is_null() {
@@ -1280,7 +1280,11 @@ impl IAttributeListTrait for Attributes {
 
 /// Copies a class id to text, as `voice-effects.json` keeps it.
 pub fn class_hex(id: &ClassId) -> String {
-    id.iter().map(|byte| format!("{byte:02x}")).collect()
+    use std::fmt::Write as _;
+    id.iter().fold(String::with_capacity(32), |mut hex, byte| {
+        let _ = write!(hex, "{byte:02x}");
+        hex
+    })
 }
 
 /// A class id from [`class_hex`]'s text.

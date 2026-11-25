@@ -279,12 +279,12 @@ impl Plugin {
         (!text.is_empty()).then(|| text.to_owned())
     }
 
-    fn resume(&mut self) {
+    fn resume(&self) {
         self.dispatch(EFF_MAINS_CHANGED, 0, 1, null_mut(), 0.0);
         self.dispatch(EFF_START_PROCESS, 0, 0, null_mut(), 0.0);
     }
 
-    fn suspend(&mut self) {
+    fn suspend(&self) {
         self.dispatch(EFF_STOP_PROCESS, 0, 0, null_mut(), 0.0);
         self.dispatch(EFF_MAINS_CHANGED, 0, 0, null_mut(), 0.0);
     }
@@ -478,8 +478,8 @@ unsafe extern "C" fn host_callback(
                 // SAFETY: the plugin's buffer of at least 64 bytes, as the
                 // interface sizes it.
                 unsafe {
-                    std::ptr::copy_nonoverlapping(name.as_ptr(), ptr.cast::<u8>(), name.len())
-                };
+                    std::ptr::copy_nonoverlapping(name.as_ptr(), ptr.cast::<u8>(), name.len());
+                }
             }
             1
         }

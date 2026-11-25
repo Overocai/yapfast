@@ -304,12 +304,12 @@ mod tests {
         std::fs::write(dir.join("Vendor").join("Comp.dll"), b"").unwrap();
         let mut vst3 = Vec::new();
         walk(&dir, Format::Vst3, 2, &mut |path| {
-            vst3.push(path.to_path_buf())
+            vst3.push(path.to_path_buf());
         });
         assert_eq!(vst3, [bundle]);
         let mut vst2 = Vec::new();
         walk(&dir, Format::Vst2, 2, &mut |path| {
-            vst2.push(path.to_path_buf())
+            vst2.push(path.to_path_buf());
         });
         assert_eq!(vst2, [dir.join("Vendor").join("Comp.dll")]);
         let _ = std::fs::remove_dir_all(&dir);

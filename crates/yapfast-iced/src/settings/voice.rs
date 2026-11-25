@@ -637,7 +637,7 @@ impl<'a> Page<'a> {
             Some((note, false)) => parts.push(form::note(theme, note.clone())),
             None => parts.push(form::note(
                 theme,
-                "Plugins are looked for where VST plugins install: Common Files\\VST3, VSTPlugins and the VST2 folders. FL Studio's own plugins run inside FL Studio VSTi, which loads here as an effect.",
+                "Plugins are looked for where VST plugins install: Common Files\\VST3, VSTPlugins and the VST2 folders. FL Studio's own plugins run only inside FL Studio.",
             )),
         }
         form::group(parts)
