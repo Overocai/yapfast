@@ -1,7 +1,8 @@
 //! What opens from the call's controls, above the control: the device menus
 //! (with the microphone's level and noise suppression), the bitrate menu,
-//! the share menu (with a setting's choices beside it), the soundboard; and
-//! someone's voice menu, their volumes over their rows.
+//! the voice effects' menu, the share menu (with a setting's choices beside
+//! it), the soundboard; and someone's voice menu, their volumes over their
+//! rows.
 
 use std::borrow::Cow;
 
@@ -21,6 +22,7 @@ use crate::{
 
 pub mod bitrate;
 pub mod device;
+pub mod effects;
 pub mod person;
 pub mod share;
 pub mod soundboard;
@@ -82,6 +84,15 @@ pub(super) fn open_popup(app: &mut App, popup: Popup) -> Task<Message> {
             return Task::none();
         }
         Popup::Bitrate => app.call.popup = Some(popup),
+        // The chain kept loads as it opens, if it hasn't.
+        Popup::Effects => {
+            app.call.popup = Some(popup);
+            return Task::batch([
+                crate::call::popups::effects::ask(yapfast_core::voice_effects::Request::Start),
+                app.sync(),
+                operation::focus(NOBODY),
+            ]);
+        }
     }
     Task::batch([app.sync(), operation::focus(NOBODY)])
 }
@@ -136,6 +147,10 @@ pub fn call_popup_view<'a>(
         ),
         Popup::Bitrate => (
             crate::call::popups::bitrate::bitrate_menu(ctx),
+            DEVICE_WIDTH,
+        ),
+        Popup::Effects => (
+            crate::call::popups::effects::effects_menu(ctx),
             DEVICE_WIDTH,
         ),
         // Under its signal, or above it without room.

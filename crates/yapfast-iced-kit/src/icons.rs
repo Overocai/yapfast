@@ -335,6 +335,8 @@ pub enum Icon {
     NoiseBarsOff,
     /// The microphone's bit rate: a waveform's bars.
     Bitrate,
+    /// The voice effects: a mixer's faders.
+    Effects,
     Palette,
     Help,
     /// The window's own title bar: back and forward, minimize, restore.
@@ -586,6 +588,7 @@ impl Icon {
             Icon::NoiseBars => icon!("noise-bars.svg"),
             Icon::NoiseBarsOff => icon!("noise-bars-off.svg"),
             Icon::Bitrate => icon!("bitrate.svg"),
+            Icon::Effects => icon!("effects.svg"),
         }
     }
 

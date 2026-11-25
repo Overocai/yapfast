@@ -493,6 +493,27 @@ pub fn view<'a>(ctx: crate::ctx::Ctx<'a>) -> Element<'a, Message> {
     } else {
         controls
     };
+    // With Discord on Windows, the voice effects: its menu opens above it,
+    // and it shows in the accent while a plugin runs on the microphone.
+    let controls = if ctx.state.discord_user.is_some() && yapfast_core::voice_effects::AVAILABLE {
+        let ink = if yapfast_core::voice_effects::active() {
+            theme.accent
+        } else {
+            theme.text
+        };
+        controls.push(ctx.spot(tinted_button(
+            ctx,
+            Icon::Effects,
+            "Voice effects",
+            ink,
+            20,
+            Some(Message::Call(crate::call::Event::Open(
+                crate::call::Popup::Effects,
+            ))),
+        )))
+    } else {
+        controls
+    };
     // Offline, Reconnect before Settings.
     let state = ctx.state;
     let controls = if !state.preview && !state.online {

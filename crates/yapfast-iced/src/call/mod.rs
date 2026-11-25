@@ -128,6 +128,8 @@ pub enum Popup {
     /// The microphone in stereo and its bit rate, from the account panel's
     /// button.
     Bitrate,
+    /// The voice effects, from the account panel's button beside it.
+    Effects,
 }
 
 /// What's done to the call, or in it.
@@ -167,6 +169,12 @@ pub enum Event {
     /// rate in kbit/s with whether it's the drag's last.
     Stereo(bool),
     Bitrate(u32, bool),
+    /// The voice effects' menu: the effects on or off, a plugin bypassed or
+    /// on, its editor opened, by its place's id; and what a change said.
+    EffectsOn(bool),
+    EffectBypass(u64, bool),
+    EffectEdit(u64),
+    EffectsDone(Result<(), String>),
     /// A soundboard sound played for everyone, heard here first, or starred.
     Play(String),
     Preview(String),
@@ -313,6 +321,21 @@ pub fn update(app: &mut App, event: Event) -> Task<Message> {
             crate::call::popups::bitrate::set_bitrate(app, value, done);
             return Task::none();
         }
+        Event::EffectsOn(on) => {
+            return crate::call::popups::effects::ask(yapfast_core::voice_effects::Request::On(on));
+        }
+        Event::EffectBypass(id, bypassed) => {
+            return crate::call::popups::effects::ask(
+                yapfast_core::voice_effects::Request::Bypass(id, bypassed),
+            );
+        }
+        Event::EffectEdit(id) => {
+            return crate::call::popups::effects::ask(yapfast_core::voice_effects::Request::Edit(
+                id,
+            ));
+        }
+        // The menu and the button read the chain as they're drawn again.
+        Event::EffectsDone(_) => return Task::none(),
         Event::Play(sound) => Action::Voice(Command::Soundboard(sound)),
         Event::Preview(sound) => Action::Voice(Command::PreviewSound(sound)),
         Event::Favorite(sound, on) => Action::Voice(Command::FavoriteSound(sound, on)),

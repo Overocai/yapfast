@@ -48,6 +48,13 @@ The call's views and what they do are in `call/`.
   or Stereo for Discord calls, the microphone's bit rate from 8 to 510
   kbit/s, which a call takes up as it's dragged and `layout.json` keeps
   when let go, and Voice Settings.
+- Beside it on Windows, the voice effects' button, in the accent while a
+  VST plugin runs on the microphone, opens their menu
+  (`call/popups/effects.rs`): Voice Effects on or off, each plugin with a
+  box that runs or bypasses it (Didn't load where it failed) and a pencil
+  that opens its editor, and Voice Settings, where plugins are added. The
+  chain kept loads as the menu opens, and the menu reads it again as each
+  change is done.
 - The device menus (`call/popups/`: the device menus, the share menu,
   the soundboard and someone's voice menu each a file): the device to use (one chosen that
   went away shows as not connected), its volume, which plays while it's
