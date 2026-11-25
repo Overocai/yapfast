@@ -4473,6 +4473,7 @@ impl Application {
             body,
             avatar,
             mention,
+            keyword,
         } = notification;
         let place = self.state.rooms.iter().find(|known| known.id == room);
         let server = self
@@ -4487,6 +4488,11 @@ impl Application {
             }
             (Some(place), _) => format!("{author} in {}", place.name),
             (None, _) => author,
+        };
+        // A keyword's alert names it, and sounds as a mention does.
+        let (title, mention) = match keyword {
+            Some(keyword) => (format!("{title} \u{b7} Keyword: {keyword}"), true),
+            None => (title, mention),
         };
         let picture = avatar.and_then(|avatar| self.state.pictures.get(&avatar).cloned());
         chat::Alert {

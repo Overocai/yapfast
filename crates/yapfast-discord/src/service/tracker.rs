@@ -1351,6 +1351,47 @@ impl Tracker {
                 .notifies(message, &self.me, &self.my_roles, place, category, thread)
     }
 
+    /// The keyword a new message holds ([`crate::keywords::matching`]) that
+    /// alerts this account as a mention does, though it doesn't notify: a
+    /// written message from someone else, not blocked or ignored, outside
+    /// message requests and spam, in a place this account hasn't muted;
+    /// none while its status is Do Not Disturb.
+    pub(super) fn keyword(&self, message: &Value) -> Option<String> {
+        if self.status == DO_NOT_DISTURB {
+            return None;
+        }
+        let kind = message["type"].as_u64().unwrap_or_default();
+        let author = message["author"]["id"].as_str().unwrap_or_default();
+        if author == self.me || !crate::message::written(kind) {
+            return None;
+        }
+        let keyword = crate::keywords::matching(message["content"].as_str()?)?;
+        let channel = message["channel_id"].as_str().unwrap_or_default();
+        let server = message["guild_id"]
+            .as_str()
+            .and_then(|guild| self.servers.iter().find(|server| server.id == guild));
+        let known = server.and_then(|server| server.channel(channel));
+        let thread = known.and_then(|known| known.thread.as_deref());
+        let place = match (thread, known) {
+            (Some(_), Some(known)) => known.parent.as_deref().unwrap_or(channel),
+            _ => channel,
+        };
+        let category = server
+            .and_then(|server| server.channel(place))
+            .filter(|known| known.thread.is_none())
+            .and_then(|known| known.parent.as_deref());
+        let unwanted = self
+            .blocked
+            .iter()
+            .chain(&self.ignored)
+            .any(|id| id == author)
+            || self
+                .private
+                .iter()
+                .any(|private| private.id == channel && (private.request || private.spam));
+        (!unwanted && !self.unreads.muted(message, place, category, thread)).then_some(keyword)
+    }
+
     /// Learns the status from settings, all or some of them, in base64.
     fn settings(&mut self, encoded: &str) {
         // Each change to the status settings starts from these, whole.

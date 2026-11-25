@@ -550,10 +550,13 @@ pub enum Live {
     },
     Created(Message),
     /// A new message that should notify this account, by its notification settings,
-    /// in a server or, with none, a DM.
+    /// in a server or, with none, a DM; or with `keyword`, one that doesn't
+    /// but holds that keyword ([`crate::keywords`]), which alerts as a
+    /// mention does.
     Notify {
         guild: Option<String>,
         message: Message,
+        keyword: Option<String>,
     },
     Updated(Message),
     Deleted {

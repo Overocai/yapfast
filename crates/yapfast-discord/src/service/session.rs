@@ -736,12 +736,24 @@ impl Session<'_> {
         if previewed {
             self.publisher.changed();
         }
+        // One that doesn't notify may still hold a keyword, which alerts
+        // as a mention does; one that notifies does so once either way.
         if *event == Event::MessageCreate
-            && self.tracker.notifies(data)
             && let Some(message) = message
         {
-            let guild = data["guild_id"].as_str().map(str::to_owned);
-            let _ = self.shared.live.send(Live::Notify { guild, message });
+            let keyword = if self.tracker.notifies(data) {
+                Some(None)
+            } else {
+                self.tracker.keyword(data).map(Some)
+            };
+            if let Some(keyword) = keyword {
+                let guild = data["guild_id"].as_str().map(str::to_owned);
+                let _ = self.shared.live.send(Live::Notify {
+                    guild,
+                    message,
+                    keyword,
+                });
+            }
         }
         if applied.unwrap_or_else(|| self.tracker.apply(event, data)) {
             self.publisher.changed();

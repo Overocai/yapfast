@@ -5523,6 +5523,9 @@ pub struct Notification {
     pub avatar: Option<String>,
     /// It mentions this account, rather than notifying as any message there does.
     pub mention: bool,
+    /// The keyword it holds, which alerts as a mention does though it
+    /// wouldn't notify (Settings' Keyword Alerts).
+    pub keyword: Option<String>,
 }
 
 /// A notification ready to show: its conversation, a title naming who wrote where, the

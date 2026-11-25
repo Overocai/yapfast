@@ -1855,7 +1855,9 @@ impl OpenChannel {
             deleted: false,
             blocked: snapshot.blocked.contains(&message.author_id),
             ignored: snapshot.ignored.contains(&message.author_id),
-            mentions_me: message.highlights_me(me, marks),
+            // A keyword someone else wrote shows as a mention does.
+            mentions_me: message.highlights_me(me, marks)
+                || (!own && yapfast_discord::keywords::matching(&message.content).is_some()),
             replies_to_me: message.replies_to(me),
             delivery: Delivery::Sent,
             reply,

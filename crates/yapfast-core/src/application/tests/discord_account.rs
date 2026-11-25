@@ -368,6 +368,7 @@ fn sets_the_status_and_holds_notifications_while_busy() {
             body: "Around?".into(),
             avatar: None,
             mention: false,
+            keyword: None,
         }))
     };
     assert!(

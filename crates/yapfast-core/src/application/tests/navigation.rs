@@ -88,6 +88,7 @@ fn notifications_name_the_place_and_open_it() {
             body: "Thinking co-op".into(),
             avatar: None,
             mention: false,
+            keyword: None,
         }));
         match effects.as_slice() {
             [Effect::Notify(alert)] => (alert.room.clone(), alert.title.clone()),

@@ -28,6 +28,7 @@ pub mod gift;
 pub mod guild;
 pub mod interactions;
 pub mod invite;
+pub mod keywords;
 pub mod limits;
 pub mod link;
 pub mod marked;

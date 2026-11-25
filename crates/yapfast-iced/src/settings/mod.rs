@@ -214,6 +214,8 @@ pub struct Settings {
     pub font_note: Option<String>,
     /// Game Activity's draft of a game.
     pub game: pages::GameDraft,
+    /// Notifications' keyword being written.
+    pub keyword: String,
     /// The keybind being recorded, and the keys pressed so far.
     pub record: Option<keybinds::Recording>,
     /// How many people blocked the Discord page lists.
@@ -255,6 +257,8 @@ pub enum Event {
     /// My Account's and the Discord page's buttons.
     Account(pages::AccountEvent),
     Game(pages::GameEvent),
+    /// Notifications' keyword alerts: one being written, added, removed.
+    Keyword(pages::KeywordEvent),
     Voice(voice::Event),
     Theme(appearance::Event),
     DesktopIcon(desktop_icons::Event),
@@ -362,6 +366,7 @@ impl Settings {
             Event::Pref(pref) => self.pref(pref, cx),
             Event::Account(event) => self.account_event(event, cx),
             Event::Game(event) => self.game_event(event, cx),
+            Event::Keyword(event) => self.keyword_event(event, cx),
             Event::Voice(event) => self.voice_event(event, cx),
             Event::DesktopIcon(event) => return self.desktop_icon_event(event, cx),
             Event::ThemeKey(key) => return self.theme_key(key, cx),

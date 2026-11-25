@@ -245,10 +245,11 @@ pub struct Prefs {
     /// order they were added; none keeps DM Sans.
     pub ui_font_files: Vec<String>,
     /// Notifications: shown, saying what messages say, flashing the
-    /// taskbar.
+    /// taskbar, and the keywords that alert as a mention does.
     pub notifications: Option<bool>,
     pub notification_text: Option<bool>,
     pub flash_taskbar: Option<bool>,
+    pub keyword_alerts: Vec<String>,
     /// Advanced: rendering with the GPU from the next start, closing to the
     /// tray, starting another Yapfast rather than showing this one.
     pub gpu_rendering: bool,

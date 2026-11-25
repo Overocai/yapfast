@@ -88,7 +88,19 @@ recording. Each change is kept at once in
   folding, boost gems in the member list, sharing that this account types
   (off, the core's typing commands go nowhere), mentioning those replied
   to and tracking taken out of links.
-- Notifications, Sounds (the set, which plays a sound when chosen, the
+- Notifications, with Keyword Alerts (`pages/notifications.rs`): the
+  words that alert as a mention does though Discord wouldn't notify, each a
+  pill with its remove button, and a field with Add (Enter adds too), up to
+  50 of 64 characters each, one already there or differing only in case
+  left out. They're kept in `layout.json` as `keyword_alerts`, handed to
+  the core as Yapfast starts and as they change
+  (`discord::set_keywords`), and the gateway's session looks each new
+  message up in them (`yapfast_discord::keywords`): a written message from
+  someone else, not blocked or ignored, outside message requests, spam and
+  muted places, holding one as whole words in any case, notifies once,
+  sounding as a mention does, its title naming the keyword; nothing while
+  Do Not Disturb. The timeline highlights such a message as a mention.
+- Sounds (the set, which plays a sound when chosen, the
   volume, and each sound's own with its play button) and Advanced.
   Advanced holds Start when you sign in, Open Discord
   links in Yapfast (outside the preview), Close to tray, saying where

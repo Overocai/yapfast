@@ -749,12 +749,15 @@ pub fn live(
         let _ = events.send(Event::DiscordEmojis(account::emojis(emojis.clone())));
         return;
     }
-    if let Ok(Live::Notify { guild, message }) = &event {
-        let _ = events.send(Event::Notify(notification(
-            discord,
-            guild.as_deref(),
-            message,
-        )));
+    if let Ok(Live::Notify {
+        guild,
+        message,
+        keyword,
+    }) = &event
+    {
+        let mut notification = notification(discord, guild.as_deref(), message);
+        notification.keyword.clone_from(keyword);
+        let _ = events.send(Event::Notify(notification));
         return;
     }
     if let Ok(Live::Typing {

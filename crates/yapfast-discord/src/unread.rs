@@ -344,6 +344,36 @@ impl Unreads {
         }
     }
 
+    /// Whether a message's place is muted for this account: its DM, or its
+    /// server, `category`, `place` (its channel) or `thread`, as
+    /// [`Self::notifies`] works them out.
+    pub fn muted(
+        &self,
+        message: &Value,
+        place: &str,
+        category: Option<&str>,
+        thread: Option<&Thread>,
+    ) -> bool {
+        let now = now();
+        let Some(channel) = message["channel_id"].as_str() else {
+            return false;
+        };
+        let Some(guild) = message["guild_id"].as_str() else {
+            return self
+                .settings
+                .get(PRIVATE)
+                .is_some_and(|settings| settings.channel_muted(channel, now));
+        };
+        thread.is_some_and(|thread| thread.mute.active(now))
+            || self.settings.get(guild).is_some_and(|settings| {
+                settings.mute.active(now)
+                    || [Some(place), category]
+                        .into_iter()
+                        .flatten()
+                        .any(|place| settings.channel_muted(place, now))
+            })
+    }
+
     /// Whether a guild message pings this account, respecting its settings.
     fn mentions_me(
         &self,

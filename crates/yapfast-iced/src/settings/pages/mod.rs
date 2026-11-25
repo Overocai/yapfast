@@ -93,6 +93,15 @@ pub struct GameDraft {
     pub invalid: bool,
 }
 
+/// Notifications' keyword alerts: the keyword being written, adding it,
+/// and removing one by its place.
+#[derive(Clone, Debug)]
+pub enum KeywordEvent {
+    Draft(String),
+    Add,
+    Remove(usize),
+}
+
 #[derive(Clone, Debug)]
 pub enum GameEvent {
     Show(bool),

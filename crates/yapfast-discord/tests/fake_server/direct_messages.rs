@@ -142,7 +142,7 @@ async fn lists_dms_and_notifies() {
     .await;
     // His message notifies, as DMs do.
     let notified = live_where(&mut live, |event| match event {
-        Live::Notify { guild, message } => Some((guild, message.author)),
+        Live::Notify { guild, message, .. } => Some((guild, message.author)),
         _ => None,
     })
     .await;
@@ -156,7 +156,7 @@ async fn lists_dms_and_notifies() {
             .unwrap();
     }
     let notified = live_where(&mut live, |event| match event {
-        Live::Notify { guild, message } => Some((guild, message.content)),
+        Live::Notify { guild, message, .. } => Some((guild, message.content)),
         _ => None,
     })
     .await;

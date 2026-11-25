@@ -59,6 +59,16 @@ pub fn set_custom_games(games: &[(String, String)]) {
     let _ = games;
 }
 
+/// The words that alert this account to a message as a mention does,
+/// though Discord wouldn't notify it (Settings' Keyword Alerts); the
+/// gateway's session takes them at once.
+pub fn set_keywords(keywords: &[String]) {
+    #[cfg(feature = "discord")]
+    yapfast_discord::keywords::set(keywords);
+    #[cfg(not(feature = "discord"))]
+    let _ = keywords;
+}
+
 #[cfg(feature = "discord")]
 use crate::chat::is_frame_layer;
 

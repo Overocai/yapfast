@@ -576,8 +576,26 @@ fn notifications_say_whether_they_mention_this_account() {
         body: "@alice co-op?".into(),
         avatar: None,
         mention: true,
+        keyword: None,
     }));
     assert!(matches!(effects.as_slice(), [Effect::Notify(alert)] if alert.mention && !alert.call));
+}
+
+#[test]
+fn a_keyword_alerts_as_a_mention_and_names_itself() {
+    let mut app = connected();
+    let effects = app.apply(Event::Notify(chat::Notification {
+        room: "games".into(),
+        author: "Sam".into(),
+        body: "Who's playing the set tonight?".into(),
+        avatar: None,
+        mention: false,
+        keyword: Some("set".into()),
+    }));
+    assert!(matches!(
+        effects.as_slice(),
+        [Effect::Notify(alert)] if alert.mention && alert.title.ends_with("Keyword: set")
+    ));
 }
 
 #[test]
