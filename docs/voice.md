@@ -64,6 +64,52 @@ mute back as it was. The call undeafened while it plays, or joined
 undeafened, ends it, as Discord's does; the change ends it, not the state,
 since a deafening asked for shows only once the backend says so.
 
+## Voice effects
+
+On Windows, Discord calls' microphone runs through VST plugins, 64-bit VST2
+and VST3 effects, in the order Settings › Voice & video arranges them
+(`crates/yapfast-vst`). They run on what goes out, after Yapfast's own
+processing, in stereo at 48 kHz, 10 ms at a time: a mono microphone goes
+out in both channels, and while any plugin runs the call sends stereo. What
+the gate lets through goes through them; once it shuts, they're handed
+silence and their tail (a reverb's, a delay's) goes on out, for up to three
+seconds, until it falls under -60 dBFS. The mic test plays them back too,
+in stereo.
+
+Settings look for plugins without loading them, where they install: the
+VST3 folders (`Common Files\VST3`, and the user's own) and the VST2 ones
+(`VSTPlugins`, `Steinberg\VSTPlugins`, `Common Files\VST2`). Each file's
+PE header says whether it exports a plugin's entry and whether it's 64-bit;
+a 32-bit plugin is listed as one Yapfast can't load. A plugin added loads
+there and then: VST2 through its binary interface (`VSTPluginMain`), VST3
+through Steinberg's interfaces (the `vst3` crate, MIT bindings of the SDK),
+its first audio class that isn't an instrument. One that takes no sound in
+is refused; an instrument that does, such as FL Studio VSTi, whose own
+mixer can host FL's native plugins, runs as an effect does.
+
+The plugins live on a thread of their own, their UI thread: it loads them,
+opens their editors in windows of its own with a timer for VST2 editors'
+idle, takes requests through a hidden window (so they're heard inside a
+plugin's own dialog), and keeps the chain in `voice-effects.json` in the
+data folder: the order, each plugin's path, class and bypass, and its state
+in base64 (a VST2 chunk or its parameters; a VST3 component's and
+controller's). The state is read as an editor closes and as the chain
+changes. A VST3 editor's edits reach the processor in its next block, as
+parameter changes; before its state is read, a block of no sound hands them
+over. The microphone's thread runs the chain under a lock; while the
+plugins' thread changes it, a block passes through as it came. A plugin
+that takes Yapfast down as it loads is named in `voice-effects.loading`
+meanwhile; started again with that file there, Yapfast leaves the plugin
+off and says why, and turning it on tries it again.
+
+Nothing loads until a call opens the microphone or Settings shows Voice &
+video, and only when a chain is kept. A plugin runs in Yapfast's own
+process, so one that crashes takes Yapfast with it.
+
+`cargo run -p yapfast-vst --example vst-probe -- [--editor SECONDS] PATH`
+loads a plugin alone, runs a second of a tone through it, puts its state
+back and opens its editor; with no path it lists the plugins found.
+
 ## Cameras
 
 Settings › Voice & video chooses the camera, beside the microphone and

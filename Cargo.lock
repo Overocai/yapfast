@@ -10895,6 +10895,7 @@ dependencies = [
  "windows-core 0.62.2",
  "x264-src",
  "yapfast-discord",
+ "yapfast-vst",
 ]
 
 [[package]]
