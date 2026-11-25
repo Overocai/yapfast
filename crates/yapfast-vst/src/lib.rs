@@ -8,7 +8,9 @@
 //! editors and runs those windows' messages, as a plugin's own UI thread;
 //! the microphone's thread runs them on its sound ([`process`]), 10 ms of
 //! 48 kHz stereo at a time. Changing the chain holds the microphone's
-//! thread off it for that block, which passes through unchanged.
+//! thread off it for that block, which passes through unchanged. A plugin
+//! added is tried first in a process of its own ([`try_alone`]), so one
+//! that crashes or hangs as it loads never loads into Yapfast.
 //!
 //! Plugins load only on Windows; elsewhere the chain stays empty.
 
@@ -94,8 +96,8 @@ pub fn warm() {
     win::warm();
 }
 
-/// Asks the chain's thread for `request`, starting it first; `done` is
-/// told on that thread once it's done.
+/// Asks the chain's thread for `request`, starting it first, without
+/// waiting for it; `done` is told on that thread once it's done.
 pub fn request(request: Request, done: Done) {
     #[cfg(windows)]
     win::request(request, done);
@@ -134,6 +136,34 @@ pub fn process(samples: &mut [f32]) -> bool {
     {
         let _ = samples;
         false
+    }
+}
+
+/// The argument that starts Yapfast as [`try_alone`], before a plugin's
+/// format (`vst2` or `vst3`) and its path.
+pub const TRY_ARGUMENT: &str = "--vst-try";
+
+/// What Yapfast started with [`TRY_ARGUMENT`] does, and nothing else: loads
+/// the plugin its `arguments` name in this process alone, runs a few blocks
+/// of silence through it and prints how that went as one JSON line, which
+/// the Yapfast about to load the plugin reads first. A plugin that crashes
+/// or hangs as it loads takes only this process down. The exit code is 0
+/// when it loaded and ran, 1 when it didn't, and 2 for arguments it doesn't
+/// take.
+pub fn try_alone(arguments: &[std::ffi::OsString]) -> i32 {
+    let format = arguments
+        .first()
+        .and_then(|format| format.to_str())
+        .and_then(Format::from_argument);
+    let (Some(format), Some(path)) = (format, arguments.get(1)) else {
+        return 2;
+    };
+    #[cfg(windows)]
+    return i32::from(!win::try_alone(format, Path::new(path)));
+    #[cfg(not(windows))]
+    {
+        let _ = (format, path);
+        2
     }
 }
 

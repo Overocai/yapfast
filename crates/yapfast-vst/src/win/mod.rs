@@ -7,16 +7,21 @@
 //! block; while the plugins' thread changes the chain, a block passes
 //! through unchanged.
 //!
-//! A plugin that takes Yapfast down as it loads is remembered: a file names
-//! it while it loads, and if Yapfast starts again with that file there, it
-//! starts with that plugin off.
+//! A plugin added, or turned on again after it failed, is first tried in a
+//! process of its own ([`try_apart`]): one that crashes there, hangs there
+//! or can't be used never loads into Yapfast, where its loading would hold
+//! up the whole process. A plugin that takes Yapfast down as it loads
+//! anyway is remembered: a file names it while it loads, and if Yapfast
+//! starts again with that file there, it starts with that plugin off.
 
 use std::{
     cell::RefCell,
     ffi::{CStr, OsStr},
     fmt::Write as _,
-    os::windows::ffi::OsStrExt,
+    io::{BufRead as _, BufReader, Write as _},
+    os::windows::{ffi::OsStrExt, process::CommandExt as _},
     path::{Path, PathBuf},
+    process::{Command, Stdio},
     ptr::{null, null_mut},
     sync::{
         Arc, LazyLock, Mutex, RwLock,
@@ -58,6 +63,12 @@ const IDLE_TIMER: usize = 1;
 /// The files the chain is kept in, and the one naming a plugin loading.
 const KEPT: &str = "voice-effects.json";
 const LOADING: &str = "voice-effects.loading";
+/// How long a plugin tried on its own may take before Yapfast gives up on
+/// it, and how many blocks it's run for there.
+const TRY_FOR: Duration = Duration::from_secs(20);
+const TRY_BLOCKS: usize = 10;
+/// Windows' flag that starts the process trying a plugin without a console.
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 /// A path as Windows takes it: UTF-16, null-terminated.
 pub fn wide(text: &OsStr) -> Vec<u16> {
@@ -233,10 +244,11 @@ struct Shared {
     thread: Mutex<Option<Thread>>,
 }
 
-/// The plugins' thread: where its requests go, and its hidden window.
+/// The plugins' thread: where its requests go, and its hidden window once
+/// it's made (0 until then), which a request wakes it through.
 struct Thread {
     sender: mpsc::Sender<(Request, Done)>,
-    window: isize,
+    window: Arc<Mutex<isize>>,
 }
 
 static SHARED: LazyLock<Shared> = LazyLock::new(|| Shared {
@@ -298,11 +310,16 @@ pub fn request(request: Request, done: Done) {
         return;
     };
     match running.sender.send((request, done)) {
-        // SAFETY: the plugins' thread's hidden window, which lasts as long
-        // as Yapfast.
-        Ok(()) => unsafe {
-            PostMessageW(running.window as HWND, WAKE, 0, 0);
-        },
+        Ok(()) => {
+            // A thread still making its window takes what waits once it
+            // has: it sets it under this lock, then takes what waits.
+            let window = *lock(&running.window);
+            if window != 0 {
+                // SAFETY: the plugins' thread's hidden window, which lasts
+                // as long as Yapfast.
+                unsafe { PostMessageW(window as HWND, WAKE, 0, 0) };
+            }
+        }
         Err(mpsc::SendError((_, done))) => {
             *thread = None;
             done(Err("Yapfast's voice effects stopped.".into()));
@@ -310,18 +327,20 @@ pub fn request(request: Request, done: Done) {
     }
 }
 
-/// Starts the plugins' thread, once it has its window.
+/// Starts the plugins' thread without waiting for it, so the window never
+/// waits on a plugin, nor on the process's loader, which a plugin loading
+/// holds: what's asked meanwhile waits for the thread's window.
 fn start() -> Option<Thread> {
     let (sender, requests) = mpsc::channel();
-    let (ready, window) = mpsc::channel();
+    let window = Arc::new(Mutex::new(0));
+    let made = window.clone();
     let started = std::thread::Builder::new()
         .name("yapfast-plugins".into())
-        .spawn(move || run(requests, &ready));
+        .spawn(move || run(requests, &made));
     if let Err(error) = started {
         tracing::warn!(%error, "could not start the plugins' thread");
         return None;
     }
-    let window = window.recv_timeout(Duration::from_secs(10)).ok()?;
     Some(Thread { sender, window })
 }
 
@@ -334,14 +353,24 @@ thread_local! {
 
 /// The plugins' thread: COM for their editors, its windows, and their
 /// messages until Yapfast ends.
-fn run(requests: mpsc::Receiver<(Request, Done)>, ready: &mpsc::Sender<isize>) {
+fn run(requests: mpsc::Receiver<(Request, Done)>, made: &Mutex<isize>) {
     // SAFETY: COM on this thread, single-threaded, as plugins' editors
     // expect of their UI thread.
     unsafe { OleInitialize(null()) };
     window::register(procedure);
     let messages = window::messages();
+    if messages.is_null() {
+        tracing::warn!("the plugins' thread couldn't make its window");
+        // Nothing can wake it: each request is told so, as Yapfast runs.
+        for (_, done) in requests {
+            done(Err("Yapfast couldn't start its voice effects.".into()));
+        }
+        return;
+    }
     HOST.with(|host| *host.borrow_mut() = Some(Host::new(requests)));
-    let _ = ready.send(messages as isize);
+    *lock(made) = messages as isize;
+    // What was asked while the window was made.
+    with_host(Host::drain);
     let mut message = MSG::default();
     // SAFETY: this thread's own queue.
     while unsafe { GetMessageW(&mut message, null_mut(), 0, 0) } > 0 {
@@ -629,6 +658,8 @@ impl Host {
         if let Some(why) = found.unusable {
             return Err(format!("{} is {why}.", found.name));
         }
+        try_apart(&found.path, found.format)
+            .map_err(|why| format!("{} wasn't added. {why}", found.name))?;
         let mut entry = Entry {
             id: self.next(),
             kept: KeptPlugin {
@@ -678,9 +709,14 @@ impl Host {
             },
         );
         entry.kept.bypassed = bypassed;
-        // Turned on again after it failed, it's tried again.
+        // Turned on again after it failed, it's tried again, on its own
+        // first.
         if !bypassed && entry.loaded.is_none() {
-            self.load(&mut entry);
+            let format = entry.kept.format.unwrap_or(Format::Vst2);
+            match try_apart(&entry.kept.path, format) {
+                Ok(()) => self.load(&mut entry),
+                Err(why) => entry.failed = Some(why),
+            }
         }
         if let Some(loaded) = &entry.loaded {
             loaded.bypassed.store(bypassed, Ordering::Relaxed);
@@ -922,6 +958,183 @@ fn close_editor(plugin: &Plugin, window: HWND) {
     }
     // SAFETY: the editor's window, its view taken out.
     unsafe { DestroyWindow(window) };
+}
+
+/// How a plugin tried on its own went: the line [`try_alone`] prints.
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct Tried {
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    vendor: String,
+    /// How long it took to load, in milliseconds.
+    #[serde(default)]
+    millis: u64,
+    /// Why it can't be used, if it can't.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+/// Tries the plugin at `path` in a process of its own before Yapfast loads
+/// it, as DAWs try theirs: Yapfast started as `yapfast --vst-try FORMAT
+/// PATH` ([`try_alone`]) loads it and runs a few blocks through it. One that
+/// crashes there, says it can't be used, or takes longer than [`TRY_FOR`]
+/// isn't loaded here, where its loading holds up the whole process (the
+/// loader's lock, which every thread starting or loading a library waits
+/// on) and its crash takes Yapfast down. Without a process to try it in,
+/// it loads here as it did. This thread's windows keep running meanwhile.
+fn try_apart(path: &Path, format: Format) -> Result<(), String> {
+    let program = match std::env::var_os("YAPFAST_VST_TRY") {
+        Some(program) => Some(PathBuf::from(program)),
+        None => std::env::current_exe().ok(),
+    };
+    let started = Instant::now();
+    let spawned = program.map(|program| {
+        Command::new(program)
+            .arg(crate::TRY_ARGUMENT)
+            .arg(format.argument())
+            .arg(path)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()
+    });
+    let mut child = match spawned {
+        Some(Ok(child)) => child,
+        Some(Err(error)) => {
+            tracing::warn!(%error, "could not try a plugin on its own; it loads in Yapfast");
+            return Ok(());
+        }
+        None => {
+            tracing::warn!(
+                "could not find Yapfast to try a plugin on its own; it loads in Yapfast"
+            );
+            return Ok(());
+        }
+    };
+    let stdout = child.stdout.take();
+    let (send, said) = mpsc::channel();
+    let reading = std::thread::Builder::new()
+        .name("yapfast-plugin-try".into())
+        .spawn(move || {
+            let mut line = String::new();
+            if let Some(stdout) = stdout {
+                let _ = BufReader::new(stdout).read_line(&mut line);
+            }
+            let _ = send.send(line);
+        });
+    if let Err(error) = reading {
+        tracing::warn!(%error, "could not hear a plugin tried on its own; it loads in Yapfast");
+        let _ = child.kill();
+        let _ = child.wait();
+        return Ok(());
+    }
+    let said = wait_running_windows(&said, TRY_FOR);
+    // It's said all it will: what it does after, as it unloads, doesn't
+    // count.
+    let _ = child.kill();
+    let ended = child.wait();
+    let Some(said) = said else {
+        tracing::warn!(path = %path.display(), "a plugin tried on its own took too long to load");
+        return Err(format!(
+            "It took over {} seconds to load on its own, so Yapfast didn't load it.",
+            TRY_FOR.as_secs()
+        ));
+    };
+    match serde_json::from_str::<Tried>(said.trim()) {
+        Ok(Tried {
+            error: None,
+            name,
+            vendor,
+            millis,
+        }) => {
+            tracing::info!(path = %path.display(), name = %name, vendor = %vendor, millis, took = ?started.elapsed(), "a plugin loaded on its own");
+            Ok(())
+        }
+        Ok(Tried {
+            error: Some(error), ..
+        }) => {
+            tracing::warn!(path = %path.display(), error = %error, "a plugin tried on its own can't be used");
+            Err(format!("Couldn't load it: {error}."))
+        }
+        Err(_) => {
+            tracing::warn!(path = %path.display(), ended = ?ended, "a plugin crashed as it loaded on its own");
+            Err("It crashed as it loaded on its own, so Yapfast didn't load it.".into())
+        }
+    }
+}
+
+/// Waits up to `limit` for the line `said` brings, running this thread's
+/// windows' messages meanwhile, so the editors open stay responsive; a
+/// request they bring waits for the host, which is busy. Nothing once the
+/// time is up.
+fn wait_running_windows(said: &mpsc::Receiver<String>, limit: Duration) -> Option<String> {
+    let until = Instant::now() + limit;
+    let mut message = MSG::default();
+    loop {
+        match said.recv_timeout(Duration::from_millis(20)) {
+            Ok(line) => return Some(line),
+            // Its reader ended without a word.
+            Err(mpsc::RecvTimeoutError::Disconnected) => return Some(String::new()),
+            Err(mpsc::RecvTimeoutError::Timeout) if Instant::now() >= until => return None,
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+        }
+        // SAFETY: this thread's own queue.
+        while unsafe { PeekMessageW(&mut message, null_mut(), 0, 0, PM_REMOVE) } != 0 {
+            // SAFETY: a message just taken off the queue.
+            unsafe {
+                TranslateMessage(&message);
+                DispatchMessageW(&message);
+            }
+        }
+    }
+}
+
+/// What Yapfast started as `yapfast --vst-try FORMAT PATH` does: loads the
+/// plugin at `path` alone in this process, runs [`TRY_BLOCKS`] blocks of
+/// silence through it and prints how that went as one JSON line, for
+/// [`try_apart`] to read; true when it loaded and ran. The plugin unloads
+/// after, which may hang this process or take it down: by then it's said
+/// all it will, and it's ended.
+pub fn try_alone(format: Format, path: &Path) -> bool {
+    // SAFETY: COM on this thread, as the plugins' thread has it.
+    unsafe { OleInitialize(null()) };
+    let started = Instant::now();
+    let loaded = match format {
+        Format::Vst2 => vst2::Plugin::load(path).map(Plugin::Vst2),
+        Format::Vst3 => {
+            vst3::Plugin::load(path, None, None).map(|plugin| Plugin::Vst3(Box::new(plugin)))
+        }
+    };
+    let millis = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+    let tried = match &loaded {
+        Ok(plugin) => {
+            let frames = crate::RATE as usize / 100;
+            let silence = vec![0.0f32; frames];
+            let (mut left, mut right) = (vec![0.0f32; frames], vec![0.0f32; frames]);
+            let mut scratch = Scratch::new();
+            for _ in 0..TRY_BLOCKS {
+                plugin.process([&silence, &silence], [&mut left, &mut right], &mut scratch);
+            }
+            let (name, vendor) = plugin.names();
+            Tried {
+                name: name.to_owned(),
+                vendor: vendor.to_owned(),
+                millis,
+                error: None,
+            }
+        }
+        Err(error) => Tried {
+            millis,
+            error: Some(error.to_string()),
+            ..Tried::default()
+        },
+    };
+    let line = serde_json::to_string(&tried).unwrap_or_default();
+    let mut out = std::io::stdout().lock();
+    let said = writeln!(out, "{line}").and_then(|()| out.flush());
+    said.is_ok() && tried.error.is_none()
 }
 
 /// The probe's windows take no messages of their own.

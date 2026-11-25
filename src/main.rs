@@ -73,6 +73,15 @@ fn main() -> Result<()> {
         logging::init_to_stderr();
         return yapfast_core::stream_worker::run();
     }
+    // A VST plugin tried on its own before Yapfast loads it: nothing else
+    // starts, and whatever the plugin does takes only this process down.
+    #[cfg(feature = "discord")]
+    if std::env::args_os().nth(1).is_some_and(|argument| {
+        argument.to_str() == Some(yapfast_core::voice_effects::TRY_ARGUMENT)
+    }) {
+        let arguments: Vec<_> = std::env::args_os().skip(2).collect();
+        std::process::exit(yapfast_core::voice_effects::try_alone(&arguments));
+    }
     let mut arguments: Vec<_> = std::env::args().skip(1).collect();
     // `yapfast theme check | install | new | export`: a theme's tools, with
     // no window.

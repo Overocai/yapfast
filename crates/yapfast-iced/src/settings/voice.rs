@@ -207,7 +207,10 @@ impl Settings {
                 else {
                     return Task::none();
                 };
-                self.voice.effects_note = Some((format!("Loading {}...", found.name), false));
+                self.voice.effects_note = Some((
+                    format!("Trying {} on its own, then loading it...", found.name),
+                    false,
+                ));
                 Request::Add(found)
             }
             Effects::Remove(id) => Request::Remove(id),

@@ -80,8 +80,18 @@ Settings look for plugins without loading them, where they install: the
 VST3 folders (`Common Files\VST3`, and the user's own) and the VST2 ones
 (`VSTPlugins`, `Steinberg\VSTPlugins`, `Common Files\VST2`). Each file's
 PE header says whether it exports a plugin's entry and whether it's 64-bit;
-a 32-bit plugin is listed as one Yapfast can't load. A plugin added loads
-there and then: VST2 through its binary interface (`VSTPluginMain`), VST3
+a 32-bit plugin is listed as one Yapfast can't load. A plugin added is
+tried first in a process of its own, as DAWs try theirs: Yapfast started as
+`yapfast --vst-try FORMAT PATH` (`yapfast_vst::try_alone`) loads it alone,
+runs ten blocks of silence through it and prints one JSON line, its name,
+vendor and load time or why it can't be used, which the Yapfast adding it
+waits 20 seconds for, its plugins' windows running meanwhile. One that
+crashes there, takes longer, or can't be used is refused without loading
+into Yapfast, where a plugin's loading holds the process's loader lock,
+which every thread starting or loading a library waits on (a heavy one,
+such as FL Studio VSTi, takes seconds), and where its crash takes Yapfast
+down. Without a process to try it in, it loads in Yapfast as before. It
+then loads there: VST2 through its binary interface (`VSTPluginMain`), VST3
 through Steinberg's interfaces (the `vst3` crate, MIT bindings of the SDK),
 its first audio class that isn't an instrument. One that takes no sound in
 is refused, as FL Studio VSTi is: it takes none, so FL Studio's native
@@ -101,11 +111,15 @@ over. The microphone's thread runs the chain under a lock; while the
 plugins' thread changes it, a block passes through as it came. A plugin
 that takes Yapfast down as it loads is named in `voice-effects.loading`
 meanwhile; started again with that file there, Yapfast leaves the plugin
-off and says why, and turning it on tries it again.
+off and says why, and turning it on tries it again, on its own first.
+Asking the thread for anything never waits on it: it starts without the
+window waiting for it, and what's asked before its hidden window is made is
+taken once it is.
 
 Nothing loads until a call opens the microphone or Settings shows Voice &
 video, and only when a chain is kept. A plugin runs in Yapfast's own
-process, so one that crashes takes Yapfast with it.
+process once it's been tried, so one that crashes later, as it runs, takes
+Yapfast with it.
 
 `cargo run -p yapfast-vst --example vst-probe -- [--editor SECONDS] PATH`
 loads a plugin alone, runs a second of a tone through it, puts its state

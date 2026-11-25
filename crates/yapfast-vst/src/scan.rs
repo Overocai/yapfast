@@ -26,6 +26,20 @@ impl Format {
             Self::Vst3 => "VST3",
         }
     }
+
+    /// How `yapfast --vst-try` names it.
+    pub fn argument(self) -> &'static str {
+        match self {
+            Self::Vst2 => "vst2",
+            Self::Vst3 => "vst3",
+        }
+    }
+
+    pub fn from_argument(argument: &str) -> Option<Self> {
+        [Self::Vst2, Self::Vst3]
+            .into_iter()
+            .find(|format| format.argument() == argument)
+    }
 }
 
 /// A plugin file found.
