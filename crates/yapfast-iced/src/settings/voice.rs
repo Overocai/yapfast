@@ -106,7 +106,8 @@ fn ask(request: voice_effects::Request) -> Task<Message> {
     voice_effects::request(
         request,
         Box::new(move |result| {
-            let _ = sender.send(result);
+            // Settings closed meanwhile take no answer.
+            drop(sender.send(result));
         }),
     );
     Task::perform(

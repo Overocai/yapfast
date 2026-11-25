@@ -11,16 +11,16 @@ description = "VST2 and VST3 effects on Yapfast's microphone"
 workspace = true
 
 [dependencies]
-anyhow.workspace = true
 serde.workspace = true
-serde_json.workspace = true
-tracing.workspace = true
-# A plugin's saved state in voice-effects.json.
-base64 = "0.22"
 
 # The plugins themselves load only on Windows, where their editors open in
 # windows of their own.
 [target.'cfg(windows)'.dependencies]
+anyhow.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+# A plugin's saved state in voice-effects.json.
+base64 = "0.22"
 # The VST 3 API's interfaces, generated from Steinberg's headers (MIT since
 # VST 3.8), with what implementing them from Rust takes.
 vst3 = "0.3"
