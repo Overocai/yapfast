@@ -242,7 +242,7 @@ pub fn crop_view<'a>(ctx: crate::ctx::Ctx<'a>, crop: &'a Crop) -> Element<'a, Me
     let zoom = slider(1.0..=MOST_ZOOM, crop.zoom, |zoom| {
         message(Event::Zoom(zoom))
     })
-    .step(0.01)
+    .step(0.01_f32)
     .style(move |_, _| slider::Style {
         rail: slider::Rail {
             backgrounds: (rail.into(), rest.into()),
