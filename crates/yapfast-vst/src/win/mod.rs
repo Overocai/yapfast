@@ -195,7 +195,10 @@ impl Chain {
                 a[1][at] = frame[1];
             }
             let mut ran = false;
-            for slot in slots.iter().filter(|slot| !slot.bypassed.load(Ordering::Relaxed)) {
+            for slot in slots
+                .iter()
+                .filter(|slot| !slot.bypassed.load(Ordering::Relaxed))
+            {
                 {
                     let [a_left, a_right] = &mut *a;
                     let [b_left, b_right] = &mut *b;
@@ -245,7 +248,9 @@ static SHARED: LazyLock<Shared> = LazyLock::new(|| Shared {
 });
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 pub fn set_folder(dir: &Path) {
@@ -418,9 +423,7 @@ fn encode(data: &[u8]) -> String {
 }
 
 fn decode(text: Option<&String>) -> Option<Vec<u8>> {
-    base64::engine::general_purpose::STANDARD
-        .decode(text?)
-        .ok()
+    base64::engine::general_purpose::STANDARD.decode(text?).ok()
 }
 
 /// A place in the chain.
@@ -583,9 +586,7 @@ impl Host {
             Format::Vst3 => {
                 let controller = decode(kept.controller.as_ref()).unwrap_or_default();
                 let class = kept.class.as_deref().and_then(vst3::class_from_hex);
-                let state = state
-                    .as_deref()
-                    .map(|state| (state, controller.as_slice()));
+                let state = state.as_deref().map(|state| (state, controller.as_slice()));
                 vst3::Plugin::load(&kept.path, class, state).map(|plugin| {
                     kept.class = Some(vst3::class_hex(&plugin.class));
                     Plugin::Vst3(plugin)
@@ -786,7 +787,11 @@ impl Host {
         };
         let kept = Kept {
             on: self.on,
-            plugins: self.entries.iter().map(|entry| entry.kept.clone()).collect(),
+            plugins: self
+                .entries
+                .iter()
+                .map(|entry| entry.kept.clone())
+                .collect(),
         };
         let Ok(data) = serde_json::to_vec_pretty(&kept) else {
             return;
@@ -978,7 +983,11 @@ pub fn probe(path: &Path, format: Format, editor: Option<Duration>) -> String {
         took.elapsed().as_millis(),
         db(energy_in),
         db(energy_out),
-        if bad > 0 { ", with samples that aren't numbers" } else { "" }
+        if bad > 0 {
+            ", with samples that aren't numbers"
+        } else {
+            ""
+        }
     );
     match &plugin {
         Plugin::Vst2(plugin) => {
@@ -1023,7 +1032,11 @@ pub fn probe(path: &Path, format: Format, editor: Option<Duration>) -> String {
                     std::thread::sleep(Duration::from_millis(IDLE_MS.into()));
                 }
                 close_editor(&plugin, window);
-                let _ = writeln!(report, "editor opened for {} s and closed", open_for.as_secs());
+                let _ = writeln!(
+                    report,
+                    "editor opened for {} s and closed",
+                    open_for.as_secs()
+                );
             }
             Err(why) => {
                 let _ = writeln!(report, "editor: {why}");

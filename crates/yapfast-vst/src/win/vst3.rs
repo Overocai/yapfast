@@ -20,23 +20,25 @@ use anyhow::{Context, Result, bail};
 use vst3::{
     Class, ComPtr, ComRef, ComWrapper, Interface,
     Steinberg::{
-        FIDString, FUnknown, IBStream, IBStream_::IStreamSeekMode_, IBStreamTrait, IPlugFrame,
-        IPlugFrameTrait, IPlugView, IPlugViewTrait, IPluginBaseTrait, IPluginFactory,
-        IPluginFactory2, IPluginFactory2Trait, IPluginFactory3, IPluginFactory3Trait,
-        IPluginFactoryTrait, PClassInfo, PClassInfo2, PFactoryInfo, TUID, ViewRect,
+        FIDString, FUnknown, IBStream,
+        IBStream_::IStreamSeekMode_,
+        IBStreamTrait, IPlugFrame, IPlugFrameTrait, IPlugView, IPlugViewTrait, IPluginBaseTrait,
+        IPluginFactory, IPluginFactory2, IPluginFactory2Trait, IPluginFactory3,
+        IPluginFactory3Trait, IPluginFactoryTrait, PClassInfo, PClassInfo2, PFactoryInfo, TUID,
+        ViewRect,
         Vst::{
             AudioBusBuffers, AudioBusBuffers__type0, BusDirections_, IAttributeList,
             IAttributeList_::AttrID, IAttributeListTrait, IAudioProcessor, IAudioProcessorTrait,
             IComponent, IComponentHandler, IComponentHandlerTrait, IComponentTrait,
             IConnectionPoint, IConnectionPointTrait, IEditController, IEditControllerTrait,
             IHostApplication, IHostApplicationTrait, IMessage, IMessageTrait, IParamValueQueue,
-            IParamValueQueueTrait, IParameterChanges, IParameterChangesTrait, MediaTypes_,
-            ParamID, ParamValue, ProcessContext, ProcessContext_::StatesAndFlags_, ProcessData,
+            IParamValueQueueTrait, IParameterChanges, IParameterChangesTrait, MediaTypes_, ParamID,
+            ParamValue, ProcessContext, ProcessContext_::StatesAndFlags_, ProcessData,
             ProcessModes_, ProcessSetup, SpeakerArr, SpeakerArrangement, String128,
             SymbolicSampleSizes_, TChar,
         },
-        int32, int64, kInvalidArgument, kNoInterface, kPlatformTypeHWND, kResultFalse,
-        kResultOk, kResultTrue, tresult, uint32,
+        int32, int64, kInvalidArgument, kNoInterface, kPlatformTypeHWND, kResultFalse, kResultOk,
+        kResultTrue, tresult, uint32,
     },
 };
 use windows_sys::Win32::Foundation::HWND;
@@ -125,7 +127,11 @@ impl Plugin {
     /// Loads the audio effect in the plugin at `path`, the class `class` if
     /// given (as it was kept), else its first effect, with `state` (its
     /// component's and controller's) put back, active at Yapfast's rate.
-    pub fn load(path: &Path, class: Option<ClassId>, state: Option<(&[u8], &[u8])>) -> Result<Self> {
+    pub fn load(
+        path: &Path,
+        class: Option<ClassId>,
+        state: Option<(&[u8], &[u8])>,
+    ) -> Result<Self> {
         let binary = crate::vst3_binary(path).context("its library isn't there")?;
         let mut library = Library::load(&binary)?;
         if let Some(init) = library.symbol(c"InitDll") {
@@ -171,7 +177,8 @@ impl Plugin {
             None => {
                 let mut cid: TUID = [0; 16];
                 // SAFETY: a TUID for the plugin to write.
-                let controller = if unsafe { component.getControllerClassId(&mut cid) } == kResultOk {
+                let controller = if unsafe { component.getControllerClassId(&mut cid) } == kResultOk
+                {
                     create::<IEditController>(&factory, &class_id(&cid))
                 } else {
                     None
@@ -252,7 +259,10 @@ impl Plugin {
             return;
         };
         let stream = ComWrapper::new(Stream::default());
-        let Some(pointer) = stream.as_com_ref::<IBStream>().map(|stream| stream.as_ptr()) else {
+        let Some(pointer) = stream
+            .as_com_ref::<IBStream>()
+            .map(|stream| stream.as_ptr())
+        else {
             return;
         };
         // SAFETY: Yapfast's stream, alive across both calls.
@@ -363,7 +373,11 @@ impl Plugin {
         audio.outs = (0..out_channels.iter().sum())
             .map(|_| vec![0.0; MAX_BLOCK])
             .collect();
-        audio.in_pointers = audio.ins.iter_mut().map(|buffer| buffer.as_mut_ptr()).collect();
+        audio.in_pointers = audio
+            .ins
+            .iter_mut()
+            .map(|buffer| buffer.as_mut_ptr())
+            .collect();
         audio.out_pointers = audio
             .outs
             .iter_mut()
@@ -454,7 +468,9 @@ impl Plugin {
         } else {
             null_mut()
         };
-        let position = self.frames.fetch_add(frames.max(0) as u64, Ordering::Relaxed);
+        let position = self
+            .frames
+            .fetch_add(frames.max(0) as u64, Ordering::Relaxed);
         audio.context.projectTimeSamples = position as i64;
         audio.context.continousTimeSamples = position as i64;
         audio.context.projectTimeMusic = position as f64 / f64::from(RATE) * TEMPO / 60.0;
@@ -490,7 +506,9 @@ impl Plugin {
     pub fn state(&self) -> (Vec<u8>, Vec<u8>) {
         let read = |get: &dyn Fn(*mut IBStream) -> tresult| {
             let stream = ComWrapper::new(Stream::default());
-            let Some(pointer) = stream.as_com_ref::<IBStream>().map(|stream| stream.as_ptr())
+            let Some(pointer) = stream
+                .as_com_ref::<IBStream>()
+                .map(|stream| stream.as_ptr())
             else {
                 return Vec::new();
             };
@@ -530,7 +548,9 @@ impl Plugin {
                 edit.setComponentState(pointer);
                 if !controller.is_empty() {
                     let own = stream(controller);
-                    if let Some(pointer) = own.as_com_ref::<IBStream>().map(|stream| stream.as_ptr()) {
+                    if let Some(pointer) =
+                        own.as_com_ref::<IBStream>().map(|stream| stream.as_ptr())
+                    {
                         edit.setState(pointer);
                     }
                 }
@@ -868,7 +888,10 @@ impl Changes {
 
     fn add(&self, id: ParamID, value: ParamValue) {
         let used = self.used.get();
-        if let Some(queue) = self.queues[..used].iter().find(|queue| queue.id.get() == id) {
+        if let Some(queue) = self.queues[..used]
+            .iter()
+            .find(|queue| queue.id.get() == id)
+        {
             queue.value.set(value);
             return;
         }
@@ -898,7 +921,11 @@ impl IParameterChangesTrait for Changes {
             .map_or(null_mut(), |queue| queue.as_ptr())
     }
 
-    unsafe fn addParameterData(&self, id: *const ParamID, index: *mut int32) -> *mut IParamValueQueue {
+    unsafe fn addParameterData(
+        &self,
+        id: *const ParamID,
+        index: *mut int32,
+    ) -> *mut IParamValueQueue {
         if id.is_null() {
             return null_mut();
         }
@@ -948,7 +975,9 @@ impl IBStreamTrait for Stream {
         if count > 0 && !buffer.is_null() {
             // SAFETY: the plugin's buffer of `bytes`, and ours of `count`
             // from `at`.
-            unsafe { std::ptr::copy_nonoverlapping(data.as_ptr().add(at), buffer.cast::<u8>(), count) };
+            unsafe {
+                std::ptr::copy_nonoverlapping(data.as_ptr().add(at), buffer.cast::<u8>(), count)
+            };
         }
         self.at.set(at + count);
         if !read.is_null() {
@@ -975,7 +1004,11 @@ impl IBStreamTrait for Stream {
         if count > 0 {
             // SAFETY: the plugin's buffer of `count` bytes, into ours.
             unsafe {
-                std::ptr::copy_nonoverlapping(buffer.cast::<u8>(), data.as_mut_ptr().add(at), count);
+                std::ptr::copy_nonoverlapping(
+                    buffer.cast::<u8>(),
+                    data.as_mut_ptr().add(at),
+                    count,
+                );
             }
         }
         self.at.set(at + count);
@@ -1031,7 +1064,11 @@ impl IPlugFrameTrait for Frame {
         }
         // SAFETY: the view's rectangle.
         let rect = unsafe { *size };
-        super::window::resize(self.window.get(), rect.right - rect.left, rect.bottom - rect.top);
+        super::window::resize(
+            self.window.get(),
+            rect.right - rect.left,
+            rect.bottom - rect.top,
+        );
         // SAFETY: the view asking, live for the call; as VST 3 asks, it's
         // told its new size once its window has it.
         if let Some(view) = unsafe { ComRef::from_raw(view) } {
@@ -1215,7 +1252,12 @@ impl IAttributeListTrait for Attributes {
         kResultOk
     }
 
-    unsafe fn getBinary(&self, id: AttrID, data: *mut *const c_void, bytes: *mut uint32) -> tresult {
+    unsafe fn getBinary(
+        &self,
+        id: AttrID,
+        data: *mut *const c_void,
+        bytes: *mut uint32,
+    ) -> tresult {
         // SAFETY: the plugin's id.
         let Some(key) = (unsafe { key(id) }) else {
             return kInvalidArgument;

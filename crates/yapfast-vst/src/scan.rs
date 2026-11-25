@@ -53,8 +53,7 @@ pub fn folders() -> Vec<(PathBuf, Format)> {
         let env = |name: &str| std::env::var_os(name).map(PathBuf::from);
         let common = env("CommonProgramFiles")
             .unwrap_or_else(|| PathBuf::from(r"C:\Program Files\Common Files"));
-        let programs =
-            env("ProgramFiles").unwrap_or_else(|| PathBuf::from(r"C:\Program Files"));
+        let programs = env("ProgramFiles").unwrap_or_else(|| PathBuf::from(r"C:\Program Files"));
         folders.push((common.join("VST3"), Format::Vst3));
         if let Some(local) = env("LOCALAPPDATA") {
             folders.push((local.join(r"Programs\Common\VST3"), Format::Vst3));
@@ -86,9 +85,12 @@ pub fn folders() -> Vec<(PathBuf, Format)> {
 pub fn scan(extra: &[PathBuf]) -> Vec<Found> {
     let mut found = Vec::new();
     let mut seen = std::collections::HashSet::new();
-    let extra = extra
-        .iter()
-        .flat_map(|folder| [(folder.clone(), Format::Vst3), (folder.clone(), Format::Vst2)]);
+    let extra = extra.iter().flat_map(|folder| {
+        [
+            (folder.clone(), Format::Vst3),
+            (folder.clone(), Format::Vst2),
+        ]
+    });
     for (folder, format) in folders().into_iter().chain(extra) {
         walk(&folder, format, DEPTH, &mut |path| {
             if seen.insert((path.to_path_buf(), format))
@@ -263,7 +265,10 @@ impl Pe {
                     let mut name = [0u8; 64];
                     file.seek(SeekFrom::Start(name_at)).ok()?;
                     let read = file.read(&mut name).ok()?;
-                    let end = name[..read].iter().position(|&byte| byte == 0).unwrap_or(read);
+                    let end = name[..read]
+                        .iter()
+                        .position(|&byte| byte == 0)
+                        .unwrap_or(read);
                     exports.push(String::from_utf8_lossy(&name[..end]).into_owned());
                 }
             }
@@ -298,10 +303,14 @@ mod tests {
         std::fs::create_dir_all(dir.join("Vendor")).unwrap();
         std::fs::write(dir.join("Vendor").join("Comp.dll"), b"").unwrap();
         let mut vst3 = Vec::new();
-        walk(&dir, Format::Vst3, 2, &mut |path| vst3.push(path.to_path_buf()));
+        walk(&dir, Format::Vst3, 2, &mut |path| {
+            vst3.push(path.to_path_buf())
+        });
         assert_eq!(vst3, [bundle]);
         let mut vst2 = Vec::new();
-        walk(&dir, Format::Vst2, 2, &mut |path| vst2.push(path.to_path_buf()));
+        walk(&dir, Format::Vst2, 2, &mut |path| {
+            vst2.push(path.to_path_buf())
+        });
         assert_eq!(vst2, [dir.join("Vendor").join("Comp.dll")]);
         let _ = std::fs::remove_dir_all(&dir);
     }

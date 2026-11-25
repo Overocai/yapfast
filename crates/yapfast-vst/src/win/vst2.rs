@@ -65,8 +65,7 @@ const FLAG_IS_SYNTH: i32 = 1 << 8;
 /// `effGetPlugCategory`'s answer for a shell of several plugins.
 const CATEGORY_SHELL: isize = 10;
 
-type HostCallback =
-    unsafe extern "C" fn(*mut AEffect, i32, i32, isize, *mut c_void, f32) -> isize;
+type HostCallback = unsafe extern "C" fn(*mut AEffect, i32, i32, isize, *mut c_void, f32) -> isize;
 type Dispatcher = unsafe extern "C" fn(*mut AEffect, i32, i32, isize, *mut c_void, f32) -> isize;
 type ProcessProc = unsafe extern "C" fn(*mut AEffect, *mut *mut f32, *mut *mut f32, i32);
 type SetParameter = unsafe extern "C" fn(*mut AEffect, i32, f32);
@@ -301,7 +300,10 @@ impl Plugin {
     /// channels' mix, and its one channel goes out on both.
     pub fn process(&self, input: [&[f32]; 2], output: [&mut [f32]; 2], scratch: &mut Scratch) {
         let frames = input[0].len().min(MAX_BLOCK);
-        let (ins, outs) = (self.inputs.min(scratch.ins.len()), self.outputs.min(scratch.outs.len()));
+        let (ins, outs) = (
+            self.inputs.min(scratch.ins.len()),
+            self.outputs.min(scratch.outs.len()),
+        );
         let mut in_ptrs = [null_mut::<f32>(); MAX_CHANNELS];
         let mut out_ptrs = [null_mut::<f32>(); MAX_CHANNELS];
         for (channel, buffer) in scratch.ins.iter_mut().enumerate().take(ins) {
@@ -332,7 +334,12 @@ impl Plugin {
         // least `frames` as it has inputs and outputs.
         unsafe {
             if let Some(process) = (*self.effect).process_replacing {
-                process(self.effect, in_ptrs.as_mut_ptr(), out_ptrs.as_mut_ptr(), frames as i32);
+                process(
+                    self.effect,
+                    in_ptrs.as_mut_ptr(),
+                    out_ptrs.as_mut_ptr(),
+                    frames as i32,
+                );
             }
         }
         let [left, right] = output;
@@ -454,7 +461,10 @@ unsafe extern "C" fn host_callback(
     match opcode {
         MASTER_VERSION => 2400,
         MASTER_CURRENT_ID => 0,
-        MASTER_IDLE | MASTER_UPDATE_DISPLAY | MASTER_AUTOMATE | MASTER_BEGIN_EDIT
+        MASTER_IDLE
+        | MASTER_UPDATE_DISPLAY
+        | MASTER_AUTOMATE
+        | MASTER_BEGIN_EDIT
         | MASTER_END_EDIT => 1,
         MASTER_GET_TIME => hosted.map_or(0, |hosted| hosted.time.get() as isize),
         MASTER_GET_SAMPLE_RATE => RATE as isize,
@@ -466,7 +476,9 @@ unsafe extern "C" fn host_callback(
                 let name = b"Yapfast\0";
                 // SAFETY: the plugin's buffer of at least 64 bytes, as the
                 // interface sizes it.
-                unsafe { std::ptr::copy_nonoverlapping(name.as_ptr(), ptr.cast::<u8>(), name.len()) };
+                unsafe {
+                    std::ptr::copy_nonoverlapping(name.as_ptr(), ptr.cast::<u8>(), name.len())
+                };
             }
             1
         }

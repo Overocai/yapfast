@@ -1,0 +1,44 @@
+# Builds the VST host and its probe on Windows itself, in a few minutes, for
+# trying plugins with it before the whole Windows build: the run's artifact
+# vst-probe holds vst-probe.exe (see crates/yapfast-vst/examples/probe.rs).
+name: VST probe
+
+on:
+  push:
+    branches: [overocai, overocai-vst]
+    paths:
+      - crates/yapfast-vst/**
+      - .github/workflows/vst-probe.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vst-probe-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    runs-on: windows-latest
+    env:
+      CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+    steps:
+      - uses: actions/checkout@v5
+      - name: The toolchain rust-toolchain.toml names
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          key: vst-probe
+      - name: Build
+        run: cargo build --locked --release -p yapfast-vst --example vst-probe
+      - name: Clippy
+        run: cargo clippy --locked --release -p yapfast-vst --all-targets
+      - name: Tests
+        run: cargo test --locked --release -p yapfast-vst
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vst-probe
+          path: target/release/examples/vst-probe.exe
+          if-no-files-found: error

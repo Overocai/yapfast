@@ -10,8 +10,8 @@ use windows_sys::Win32::{
     Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM},
     System::LibraryLoader::GetModuleHandleW,
     UI::WindowsAndMessaging::{
-        AdjustWindowRectEx, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW, GetWindowLongPtrW,
-        GWL_EXSTYLE, GWL_STYLE, HWND_MESSAGE, IDC_ARROW, IsIconic, LoadCursorW, RegisterClassExW,
+        AdjustWindowRectEx, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW, GWL_EXSTYLE, GWL_STYLE,
+        GetWindowLongPtrW, HWND_MESSAGE, IDC_ARROW, IsIconic, LoadCursorW, RegisterClassExW,
         SW_RESTORE, SW_SHOW, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER, SetForegroundWindow,
         SetWindowPos, ShowWindow, WNDCLASSEXW, WS_CAPTION, WS_CLIPCHILDREN, WS_MINIMIZEBOX,
         WS_OVERLAPPED, WS_SYSMENU,
