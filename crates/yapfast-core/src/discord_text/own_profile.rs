@@ -12,8 +12,8 @@ use yapfast_discord::profile::PICTURE_LIMIT;
 
 use super::{commands::NOT_DISCORD, *};
 use crate::chat::{
-    OwnProfile, PickedPicture, Pixels, ProfileChange, ProfilePicture, Wishlist, WishlistItem,
-    file_size,
+    OwnProfile, PickedPicture, PictureCrop, Pixels, ProfileChange, ProfilePicture, Wishlist,
+    WishlistItem, file_size,
 };
 
 /// The size Discord's client crops a picture to before it sends it: a
@@ -186,9 +186,9 @@ pub(super) fn command(
                 });
             });
         }
-        DiscordCommand::ProfilePicture { kind, path } => {
+        DiscordCommand::ProfilePicture { kind, path, crop } => {
             tokio::task::spawn_blocking(move || {
-                let result = read_picture(&path, kind);
+                let result = read_picture(&path, kind, crop);
                 let _ = events.send(Event::ProfilePicture { kind, path, result });
             });
         }
@@ -408,33 +408,61 @@ fn main_bodies(change: &ProfileChange) -> (Value, Value) {
     (Value::Object(user), Value::Object(profile))
 }
 
-/// The picture at `path` as Discord's client sends it for a profile: cropped
-/// from its middle to a square avatar or a 17 by 6 banner, at most
-/// [`AVATAR`] or [`BANNER`], with a preview at the editor's size. Only the
-/// file to send and the preview stay; the decoded picture goes. An animated
-/// GIF goes as it is, so it stays animated.
-pub(super) fn read_picture(path: &Path, kind: ProfilePicture) -> Result<PickedPicture, String> {
+/// The picture at `path` as Discord's client sends it for a profile: cut
+/// where `chosen` frames it, or else from its middle, to a square avatar or
+/// a 17 by 6 banner, at most [`AVATAR`] or [`BANNER`], with a preview at
+/// the editor's size. Only the file to send and the preview stay; the
+/// decoded picture goes. An animated GIF stays animated: cut frame by
+/// frame where it was framed, or else sent as it is.
+pub(super) fn read_picture(
+    path: &Path,
+    kind: ProfilePicture,
+    chosen: Option<PictureCrop>,
+) -> Result<PickedPicture, String> {
     let (largest, preview) = match kind {
         ProfilePicture::Avatar => (AVATAR, AVATAR_PREVIEW),
         ProfilePicture::Banner => (BANNER, BANNER_PREVIEW),
     };
-    read_shaped(path, largest, preview, "a profile picture")
+    read_shaped(path, largest, preview, "a profile picture", chosen)
 }
 
-/// The picture at `path` as Discord's client sends it: cropped from its
-/// middle to the shape of `largest`, and at most that, with a preview of
-/// `preview`'s size. `what` names it in an error, such as "a profile
-/// picture".
-pub(super) fn read_shaped(
-    path: &Path,
-    largest: (u32, u32),
-    preview: (u32, u32),
-    what: &str,
-) -> Result<PickedPicture, String> {
-    let name = path
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_default();
+/// A picture chosen for a profile as the Edit Image window shows it: its
+/// own size, and its pixels fitted within [`CROP_SHOWN`].
+pub struct CropSource {
+    /// The picture's own width and height.
+    pub size: (u32, u32),
+    /// The width and height it's shown at.
+    pub shown: (u32, u32),
+    /// Its pixels as shown, straight RGBA.
+    pub rgba: Vec<u8>,
+}
+
+/// The longest side the Edit Image window shows a picture at: its frame
+/// is 260 px across, zoomed up to four times.
+const CROP_SHOWN: u32 = 1280;
+
+/// The picture at `path` as the Edit Image window shows it, or why it
+/// can't be a profile picture, as reading it for the profile would say.
+pub fn read_to_crop(path: &Path) -> Result<CropSource, String> {
+    let (_, _, decoded) = open_picture(path, "a profile picture")?;
+    let size = decoded.dimensions();
+    let shown = if size.0.max(size.1) > CROP_SHOWN {
+        decoded.thumbnail(CROP_SHOWN, CROP_SHOWN).into_rgba8()
+    } else {
+        decoded.into_rgba8()
+    };
+    Ok(CropSource {
+        size,
+        shown: shown.dimensions(),
+        rgba: shown.into_raw(),
+    })
+}
+
+/// The picture at `path` read and decoded as one for `what` (such as "a
+/// profile picture") would be: its file, its format and its pixels, or why
+/// it can't be one.
+fn open_picture(path: &Path, what: &str) -> Result<(Vec<u8>, ImageFormat, DynamicImage), String> {
+    let name = file_name(path);
     let size = std::fs::metadata(path)
         .ok()
         .filter(std::fs::Metadata::is_file)
@@ -459,16 +487,47 @@ pub(super) fn read_shaped(
         })
         .ok_or_else(not_a_picture)?;
     let mut reader = image::ImageReader::with_format(std::io::Cursor::new(&data), format);
-    let mut limits = image::Limits::default();
-    limits.max_image_width = Some(8192);
-    limits.max_image_height = Some(8192);
-    limits.max_alloc = Some(256 * 1024 * 1024);
-    reader.limits(limits);
+    reader.limits(picture_limits());
     let decoded = reader.decode().map_err(|error| {
         tracing::info!(%error, "could not decode {what}");
         not_a_picture()
     })?;
-    let cropped = crop(&decoded, largest);
+    Ok((data, format, decoded))
+}
+
+/// A file's name, as an error names it.
+fn file_name(path: &Path) -> String {
+    path.file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
+/// How large a picture chosen for a profile may decode: 8192 px each way,
+/// and 256 MiB.
+fn picture_limits() -> image::Limits {
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(8192);
+    limits.max_image_height = Some(8192);
+    limits.max_alloc = Some(256 * 1024 * 1024);
+    limits
+}
+
+/// The picture at `path` as Discord's client sends it: cut where `chosen`
+/// frames it, or else from its middle, in the shape of `largest`, and at
+/// most that, with a preview of `preview`'s size. `what` names it in an
+/// error, such as "a profile picture".
+pub(super) fn read_shaped(
+    path: &Path,
+    largest: (u32, u32),
+    preview: (u32, u32),
+    what: &str,
+    chosen: Option<PictureCrop>,
+) -> Result<PickedPicture, String> {
+    let (data, format, decoded) = open_picture(path, what)?;
+    let not_a_picture = || format!("{} isn't a PNG, JPG, GIF or WebP picture.", file_name(path));
+    let (width, height) = decoded.dimensions();
+    let rect = chosen.map(|chosen| chosen.within(width, height, largest));
+    let cropped = crop(&decoded, largest, rect);
     drop(decoded);
     let small = cropped.thumbnail_exact(preview.0, preview.1).into_rgba8();
     let preview = Arc::new(Picture {
@@ -478,9 +537,25 @@ pub(super) fn read_shaped(
         animation: None,
     });
     if format == ImageFormat::Gif {
+        // Cut where it was framed, frame by frame; one that can't be, or
+        // comes out too large, goes as it is.
+        let data: Arc<[u8]> = match rect {
+            Some(rect) => match crop_gif(&data, rect, largest) {
+                Ok(cut) if cut.len() as u64 <= PICTURE_LIMIT => cut.into(),
+                Ok(cut) => {
+                    tracing::info!(bytes = cut.len(), "a cut GIF came out too large to send");
+                    data.into()
+                }
+                Err(error) => {
+                    tracing::info!(%error, "could not cut a GIF");
+                    data.into()
+                }
+            },
+            None => data.into(),
+        };
         return Ok(PickedPicture {
             mime: "image/gif",
-            data: data.into(),
+            data,
             preview,
         });
     }
@@ -506,34 +581,81 @@ pub(super) fn read_shaped(
     })
 }
 
-/// The middle of `picture` in the shape of `largest`, shrunk to it if it's
-/// larger.
-fn crop(picture: &DynamicImage, largest: (u32, u32)) -> DynamicImage {
+/// `picture` cut at `rect` (its left and top, width and height), or else
+/// its middle in the shape of `largest`, shrunk to `largest` if it's larger.
+fn crop(
+    picture: &DynamicImage,
+    largest: (u32, u32),
+    rect: Option<(u32, u32, u32, u32)>,
+) -> DynamicImage {
     let (width, height) = picture.dimensions();
-    // The widest part of the shape that fits, as whole pixels.
-    let (shape_width, shape_height) = largest;
-    let (crop_width, crop_height) = if u64::from(width) * u64::from(shape_height)
-        > u64::from(height) * u64::from(shape_width)
-    {
-        let crop_width =
-            (u64::from(height) * u64::from(shape_width) / u64::from(shape_height)) as u32;
-        (crop_width.max(1), height)
+    let (x, y, crop_width, crop_height) = rect.unwrap_or_else(|| middle(width, height, largest));
+    let cropped = picture.crop_imm(x, y, crop_width, crop_height);
+    if crop_width > largest.0 {
+        cropped.resize_exact(largest.0, largest.1, FilterType::Lanczos3)
     } else {
-        let crop_height =
-            (u64::from(width) * u64::from(shape_height) / u64::from(shape_width)) as u32;
-        (width, crop_height.max(1))
-    };
-    let cropped = picture.crop_imm(
+        cropped
+    }
+}
+
+/// The middle of a picture `width` by `height` in the shape of `largest`,
+/// the widest part of the shape that fits, as whole pixels: its left and
+/// top, width and height.
+fn middle(width: u32, height: u32, largest: (u32, u32)) -> (u32, u32, u32, u32) {
+    let (shape_width, shape_height) = (u64::from(largest.0.max(1)), u64::from(largest.1.max(1)));
+    let (crop_width, crop_height) =
+        if u64::from(width) * shape_height > u64::from(height) * shape_width {
+            let crop_width = (u64::from(height) * shape_width / shape_height) as u32;
+            (crop_width.max(1), height)
+        } else {
+            let crop_height = (u64::from(width) * shape_height / shape_width) as u32;
+            (width, crop_height.max(1))
+        };
+    (
         (width - crop_width) / 2,
         (height - crop_height) / 2,
         crop_width,
         crop_height,
-    );
-    if crop_width > shape_width {
-        cropped.resize_exact(shape_width, shape_height, FilterType::Lanczos3)
+    )
+}
+
+/// A GIF cut at `rect` (its left and top, width and height) frame by
+/// frame, each shrunk to `largest` if it's larger, and encoded again to
+/// loop as it did. Each frame is decoded, cut and encoded before the next,
+/// so only one is held at a time.
+fn crop_gif(
+    data: &[u8],
+    (x, y, width, height): (u32, u32, u32, u32),
+    largest: (u32, u32),
+) -> image::ImageResult<Vec<u8>> {
+    use image::{
+        AnimationDecoder, ImageDecoder,
+        codecs::gif::{GifDecoder, GifEncoder, Repeat},
+    };
+    let mut decoder = GifDecoder::new(std::io::Cursor::new(data))?;
+    decoder.set_limits(picture_limits())?;
+    let size = if width > largest.0 {
+        largest
     } else {
-        cropped
+        (width, height)
+    };
+    let mut file = Vec::new();
+    {
+        let mut encoder = GifEncoder::new_with_speed(&mut file, 10);
+        encoder.set_repeat(Repeat::Infinite)?;
+        for frame in decoder.into_frames() {
+            let frame = frame?;
+            let delay = frame.delay();
+            let canvas = frame.into_buffer();
+            let mut cut = image::imageops::crop_imm(&canvas, x, y, width, height).to_image();
+            drop(canvas);
+            if size != (width, height) {
+                cut = image::imageops::resize(&cut, size.0, size.1, FilterType::Triangle);
+            }
+            encoder.encode_frame(image::Frame::from_parts(cut, 0, 0, delay))?;
+        }
     }
+    Ok(file)
 }
 
 #[cfg(test)]
@@ -565,7 +687,8 @@ mod tests {
     #[test]
     fn a_picture_is_cropped_and_sized_as_discords_client_sends_it() {
         let dir = saved(3000, 1000, false, ImageFormat::Jpeg);
-        let avatar = read_picture(&dir.path().join("picture"), ProfilePicture::Avatar).unwrap();
+        let avatar =
+            read_picture(&dir.path().join("picture"), ProfilePicture::Avatar, None).unwrap();
         assert_eq!(avatar.mime, "image/jpeg");
         let sent = image::load_from_memory(&avatar.data).unwrap();
         assert_eq!(
@@ -578,7 +701,8 @@ mod tests {
             AVATAR_PREVIEW
         );
 
-        let banner = read_picture(&dir.path().join("picture"), ProfilePicture::Banner).unwrap();
+        let banner =
+            read_picture(&dir.path().join("picture"), ProfilePicture::Banner, None).unwrap();
         let sent = image::load_from_memory(&banner.data).unwrap();
         assert_eq!(
             sent.dimensions(),
@@ -591,8 +715,96 @@ mod tests {
         );
 
         let dir = saved(64, 64, true, ImageFormat::Png);
-        let avatar = read_picture(&dir.path().join("picture"), ProfilePicture::Avatar).unwrap();
+        let avatar =
+            read_picture(&dir.path().join("picture"), ProfilePicture::Avatar, None).unwrap();
         assert_eq!(avatar.mime, "image/png", "transparency stays");
+    }
+
+    #[test]
+    fn a_framed_picture_is_cut_where_it_was_framed() {
+        // Red on the left half, blue on the right.
+        let dir = tempfile::tempdir().unwrap();
+        let picture = image::RgbImage::from_fn(400, 200, |x, _| {
+            if x < 200 {
+                image::Rgb([255, 0, 0])
+            } else {
+                image::Rgb([0, 0, 255])
+            }
+        });
+        picture
+            .save_with_format(dir.path().join("picture"), ImageFormat::Png)
+            .unwrap();
+        let chosen = PictureCrop {
+            x: 0.5,
+            y: 0.0,
+            width: 0.5,
+            height: 1.0,
+        };
+        let avatar = read_picture(
+            &dir.path().join("picture"),
+            ProfilePicture::Avatar,
+            Some(chosen),
+        )
+        .unwrap();
+        let sent = image::load_from_memory(&avatar.data).unwrap().into_rgb8();
+        assert_eq!(sent.dimensions(), (200, 200), "the right half, square");
+        let middle = sent.get_pixel(100, 100);
+        assert!(middle[2] > 200 && middle[0] < 50, "blue: {middle:?}");
+    }
+
+    #[test]
+    fn a_frame_keeps_the_profiles_shape_within_the_picture() {
+        let chosen = PictureCrop {
+            x: 0.9,
+            y: 0.9,
+            width: 0.5,
+            height: 0.5,
+        };
+        assert_eq!(chosen.within(1000, 500, AVATAR), (500, 0, 500, 500));
+        assert_eq!(
+            chosen.within(1000, 1000, BANNER),
+            (500, 824, 500, 176),
+            "17 by 6, as far down as it goes"
+        );
+    }
+
+    #[test]
+    fn a_framed_gif_is_cut_frame_by_frame() {
+        use image::{
+            AnimationDecoder,
+            codecs::gif::{GifDecoder, GifEncoder, Repeat},
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let mut file = Vec::new();
+        {
+            let mut encoder = GifEncoder::new(&mut file);
+            encoder.set_repeat(Repeat::Infinite).unwrap();
+            for shade in [0u8, 255] {
+                let frame = image::RgbaImage::from_pixel(300, 100, image::Rgba([shade, 0, 0, 255]));
+                encoder.encode_frame(image::Frame::new(frame)).unwrap();
+            }
+        }
+        std::fs::write(dir.path().join("moving.gif"), &file).unwrap();
+        let chosen = PictureCrop {
+            x: 0.25,
+            y: 0.0,
+            width: 1.0 / 3.0,
+            height: 1.0,
+        };
+        let avatar = read_picture(
+            &dir.path().join("moving.gif"),
+            ProfilePicture::Avatar,
+            Some(chosen),
+        )
+        .unwrap();
+        assert_eq!(avatar.mime, "image/gif");
+        let frames = GifDecoder::new(std::io::Cursor::new(&avatar.data[..]))
+            .unwrap()
+            .into_frames()
+            .collect_frames()
+            .unwrap();
+        assert_eq!(frames.len(), 2, "still moving");
+        assert_eq!(frames[0].buffer().dimensions(), (100, 100));
     }
 
     #[test]
@@ -601,10 +813,10 @@ mod tests {
         let path = dir.path().join("notes.txt");
         std::fs::write(&path, "hello").unwrap();
         assert_eq!(
-            read_picture(&path, ProfilePicture::Avatar).unwrap_err(),
+            read_picture(&path, ProfilePicture::Avatar, None).unwrap_err(),
             "notes.txt isn't a PNG, JPG, GIF or WebP picture."
         );
-        assert!(read_picture(&dir.path().join("gone.png"), ProfilePicture::Avatar).is_err());
+        assert!(read_picture(&dir.path().join("gone.png"), ProfilePicture::Avatar, None).is_err());
     }
 
     #[test]

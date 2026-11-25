@@ -1061,16 +1061,32 @@ with Nitro", or "Upgrade Nitro" with a lesser Nitro, which opens
 `https://discord.com/nitro`. Yapfast shows the offer under the name, and
 a lock in place of the pencil on each of them.
 
-Change Avatar and Change Banner use the file chooser attachments use. Yapfast
-reads the picture off the UI thread, as Discord's cropper sends it: the
-middle square of an avatar, at most 1024 pixels, and the middle 17 by 6 of
-a banner, at most 2400 by 848, from a PNG, JPG, GIF or WebP under 10 MB.
-It keeps only that file, a PNG where the picture has transparency and
-otherwise a JPEG, and a preview at the size the card gets everyone's
-pictures in, 128 pixels square and 600 by 212; an
-animated GIF goes as it is, so it stays animated. The full decoded picture
-is dropped at once, and closing the editor drops the rest. Previews any
-larger stay held by the renderer after the editor closes.
+Change Avatar and Change Banner use the file chooser attachments use, then
+open Discord's Edit Image window over the editor
+(`crates/yapfast-iced/src/profile/crop.rs`): the picture under a frame of
+the profile's shape, a circle 260 px across for the avatar and 380 by 134
+(17 by 6) for the banner, dimmed outside it with a white line round it. A
+drag moves the picture under the frame, and the slider or the wheel zooms
+it from where it just covers the frame to four times that; the frame never
+leaves the picture. Reset puts it back in the middle, unzoomed; Cancel,
+Escape, the close button or a click outside choose nothing. The window
+shows the picture as the core reads it for that
+(`discord_text::read_to_crop`), at most 1280 px across, on a blocking
+thread, and lets it go as it closes. Apply hands the core where the frame
+stands, as parts of the picture's width and height (`chat::PictureCrop`).
+
+Yapfast then reads the picture off the UI thread, as Discord's cropper
+sends it: cut where the frame stood in the profile's shape (or, with no
+frame, about its middle), the square of an avatar at most 1024 pixels and
+the 17 by 6 of a banner at most 2400 by 848, from a PNG, JPG, GIF or WebP
+under 10 MB. It keeps only that file, a PNG where the picture has
+transparency and otherwise a JPEG, and a preview at the size the card gets
+everyone's pictures in, 128 pixels square and 600 by 212. A GIF stays
+animated: cut frame by frame where it was framed, each frame decoded, cut
+and encoded again before the next, and sent as it was when it can't be cut
+or comes out over 10 MB. The full decoded picture is dropped at once, and
+closing the editor drops the rest. Previews any larger stay held by the
+renderer after the editor closes.
 
 Save Changes sends what changed, as the client does, in up to two
 requests, each only with fields to send:

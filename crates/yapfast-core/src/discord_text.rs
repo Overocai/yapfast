@@ -58,6 +58,7 @@ mod stickers;
 pub use channels::Channels;
 pub use commands::{command, finished, live};
 pub use open_channel::{Load, OpenChannel};
+pub use own_profile::{CropSource, read_to_crop};
 
 /// Discord's message length limit without Nitro, in characters.
 pub const MAX_CHARS: usize = 2000;

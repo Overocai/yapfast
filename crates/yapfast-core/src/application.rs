@@ -2334,6 +2334,9 @@ pub enum Action {
     PickProfilePicture {
         kind: chat::ProfilePicture,
         path: PathBuf,
+        /// Where the Edit Image window framed it; none cuts it about its
+        /// middle.
+        crop: Option<chat::PictureCrop>,
     },
     ResetProfilePicture(chat::ProfilePicture),
     /// Undo every change in the profile editor, as its bar's Reset does.
@@ -4047,7 +4050,9 @@ impl Application {
                 self.write_profile(field, text);
                 vec![]
             }
-            Action::PickProfilePicture { kind, path } => self.pick_profile_picture(kind, path),
+            Action::PickProfilePicture { kind, path, crop } => {
+                self.pick_profile_picture(kind, path, crop)
+            }
             Action::ResetProfilePicture(kind) => {
                 self.reset_profile_picture(kind);
                 vec![]

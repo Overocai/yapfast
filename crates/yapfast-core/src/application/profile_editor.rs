@@ -7,7 +7,9 @@
 //! in docs/discord/people.md.
 
 use super::*;
-use crate::chat::{OwnProfile, Permission, PickedPicture, ProfileChange, ProfilePicture, Wishlist};
+use crate::chat::{
+    OwnProfile, Permission, PickedPicture, PictureCrop, ProfileChange, ProfilePicture, Wishlist,
+};
 
 /// The longest name, pronouns and bio Discord takes, in characters: a
 /// server nickname and a display name alike.
@@ -586,11 +588,13 @@ impl Application {
         }
     }
 
-    /// Reads a picture chosen for the avatar or banner.
+    /// Reads a picture chosen for the avatar or banner, cut where `crop`
+    /// frames it.
     pub(super) fn pick_profile_picture(
         &mut self,
         kind: ProfilePicture,
         path: PathBuf,
+        crop: Option<PictureCrop>,
     ) -> Vec<Effect> {
         let Some(editor) = self.state.edited_profile().filter(|editor| {
             editor.may_picture(kind) && editor.profile.is_some() && !editor.saving
@@ -600,7 +604,7 @@ impl Application {
         editor.reading = Some((kind, path.clone()));
         editor.error = None;
         vec![Effect::Backend(Command::Discord(
-            DiscordCommand::ProfilePicture { kind, path },
+            DiscordCommand::ProfilePicture { kind, path, crop },
         ))]
     }
 

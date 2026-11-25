@@ -130,10 +130,12 @@ fn pick(kind: &str, path: PathBuf) -> Action {
         "banner" => Action::PickProfilePicture {
             kind: ProfilePicture::Banner,
             path,
+            crop: None,
         },
         _ => Action::PickProfilePicture {
             kind: ProfilePicture::Avatar,
             path,
+            crop: None,
         },
     }
 }

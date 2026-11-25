@@ -108,6 +108,7 @@ mod glass;
 mod layers;
 mod live;
 pub mod motion;
+mod pan;
 mod picture;
 mod pointer;
 mod rows;
@@ -124,6 +125,7 @@ pub use self::{
     glass::{BlurredWindow, GlassLook, Pane, draw_glass, pane_radii},
     layers::*,
     live::*,
+    pan::*,
     picture::*,
     pointer::*,
     rows::*,

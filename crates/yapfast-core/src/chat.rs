@@ -3442,10 +3442,12 @@ pub enum DiscordCommand {
         server: Option<String>,
     },
     /// Read the picture at `path` for a profile, as Discord takes it, with
-    /// a preview; [`Event::ProfilePicture`] follows.
+    /// a preview: cut where `crop` frames it, or else about its middle;
+    /// [`Event::ProfilePicture`] follows.
     ProfilePicture {
         kind: ProfilePicture,
         path: PathBuf,
+        crop: Option<PictureCrop>,
     },
     /// Change this account's profile in a Discord server, by its server
     /// id, or its main profile; [`Event::ProfileSaved`] follows.
@@ -4094,6 +4096,39 @@ pub struct OwnProfile {
 pub enum ProfilePicture {
     Avatar,
     Banner,
+}
+
+/// The part of a chosen picture a profile takes, as the editor's Edit
+/// Image window frames it: its left and top, width and height, each a part
+/// of the picture's own, from 0 to 1. The picture is cut there in the
+/// profile's shape, which its width sets.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PictureCrop {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+}
+
+impl PictureCrop {
+    /// Where it lies in a picture `width` by `height`, in whole pixels, in
+    /// the shape of `shape`: its left and top, width and height, kept
+    /// within the picture.
+    pub fn within(self, width: u32, height: u32, shape: (u32, u32)) -> (u32, u32, u32, u32) {
+        let (shape_width, shape_height) = (u64::from(shape.0.max(1)), u64::from(shape.1.max(1)));
+        let mut crop_width = ((self.width * width as f32).round() as u32).clamp(1, width.max(1));
+        let mut crop_height = ((u64::from(crop_width) * shape_height / shape_width) as u32).max(1);
+        if crop_height > height {
+            crop_height = height.max(1);
+            crop_width = ((u64::from(crop_height) * shape_width / shape_height) as u32)
+                .clamp(1, width.max(1));
+        }
+        let x =
+            ((self.x * width as f32).round().max(0.0) as u32).min(width.saturating_sub(crop_width));
+        let y = ((self.y * height as f32).round().max(0.0) as u32)
+            .min(height.saturating_sub(crop_height));
+        (x, y, crop_width, crop_height)
+    }
 }
 
 /// A picture chosen for a profile: the file Discord takes, by its type and

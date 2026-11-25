@@ -110,6 +110,8 @@ pub enum Event {
     Close,
     /// In the Display Name Style window.
     Style(crate::profile::name_style::Event),
+    /// In the Edit Image window, which a picture chosen opens.
+    Crop(crate::profile::crop::Event),
 }
 
 fn message(event: Event) -> Message {
@@ -130,6 +132,8 @@ pub struct Editor {
     bio: Draft,
     /// The Display Name Style window, while it's open.
     pub(crate) style: Option<crate::profile::name_style::Window>,
+    /// The Edit Image window, while a picture chosen is framed.
+    pub(crate) crop: Option<crate::profile::crop::Crop>,
     /// The core's editor and lists changes its card was made at.
     made: (u64, u64),
 }
@@ -147,6 +151,7 @@ impl Editor {
             tag_query: String::new(),
             bio: Draft::default(),
             style: None,
+            crop: None,
             made: (0, 0),
         }
     }
@@ -315,6 +320,7 @@ impl Editor {
         let editor = self;
         match event {
             Event::Style(event) => return crate::profile::name_style::update(editor, event, cx),
+            Event::Crop(event) => return crate::profile::crop::update(editor, event, cx),
             Event::Edit(field) => {
                 editor.editing = field;
                 editor.colour_open = false;
@@ -404,8 +410,13 @@ impl Editor {
                     },
                 );
             }
+            // Framed in the Edit Image window first, as Discord's client
+            // does; its Apply reads it for the profile.
             Event::Picked(kind, path) => {
-                cx.dispatch(Action::PickProfilePicture { kind, path });
+                let (crop, read) = crate::profile::crop::Crop::open(kind, path);
+                editor.crop = Some(crop);
+                cx.touch();
+                return read;
             }
             Event::Reset(kind) => {
                 editor.pop = None;
@@ -480,7 +491,7 @@ impl Editor {
     /// Escape in the editor: what's being edited or open first, then the
     /// editor.
     pub fn escape(&mut self, cx: &mut Cx<'_>) -> Task<Message> {
-        if crate::profile::name_style::escape(self) {
+        if crate::profile::crop::escape(self) || crate::profile::name_style::escape(self) {
             return Task::none();
         }
         let editor = self;
@@ -720,6 +731,9 @@ pub fn profile_editor_view<'a>(ctx: crate::ctx::Ctx<'a>) -> Option<Element<'a, M
             window,
             &editor.shown,
         ));
+    }
+    if let Some(crop) = &editor.crop {
+        layers = layers.push(crate::profile::crop::crop_view(ctx, crop));
     }
     Some(opaque(layers))
 }

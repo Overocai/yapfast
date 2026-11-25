@@ -12,6 +12,7 @@
 pub(crate) mod activity;
 pub mod body;
 mod cosmetic;
+pub(crate) mod crop;
 pub mod editor;
 mod full;
 pub mod look;

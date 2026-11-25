@@ -294,7 +294,7 @@ fn too_big_emoji() -> String {
 /// The picture at `path` as a new emoji: its middle, square, at most 128
 /// pixels; a GIF goes as it is, so it stays animated.
 pub(super) fn read_emoji(path: &Path) -> Result<PickedPicture, String> {
-    let picked = read_shaped(path, EMOJI, EMOJI_PREVIEW, "an emoji")?;
+    let picked = read_shaped(path, EMOJI, EMOJI_PREVIEW, "an emoji", None)?;
     if picked.data.len() > EMOJI_LIMIT {
         return Err(too_big_emoji());
     }

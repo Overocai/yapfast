@@ -92,4 +92,5 @@ jobs:
       - name: The unit tests of what the branch changes
         run: |
           nix develop path:./nix --command cargo test --locked --profile fast -p yapfast-discord --lib -- voice::tests:: call_connection::tests::
-          nix develop path:./nix --command cargo test --locked --profile fast -p yapfast-core --lib -- discord_audio::tests::
+          nix develop path:./nix --command cargo test --locked --profile fast -p yapfast-core --lib -- discord_audio::tests:: own_profile::tests:: application::tests::profile_editor
+          nix develop path:./nix --command cargo test --locked --profile fast -p yapfast-iced-kit --lib -- pan::tests::

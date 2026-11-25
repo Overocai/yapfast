@@ -85,6 +85,7 @@ fn a_server_profile_is_edited_as_discords_per_server_profile_editor_does() {
         app.dispatch(Action::PickProfilePicture {
             kind: ProfilePicture::Avatar,
             path: "cat.png".into(),
+            crop: None,
         })
         .is_empty()
     );
@@ -156,6 +157,7 @@ fn a_server_profile_is_edited_as_discords_per_server_profile_editor_does() {
         app.dispatch(Action::PickProfilePicture {
             kind: ProfilePicture::Avatar,
             path: "cat.png".into(),
+            crop: None,
         })
         .as_slice(),
         [Effect::Backend(Command::Discord(
@@ -303,6 +305,7 @@ fn the_main_profile_is_edited_as_discords_profile_editor_does() {
         app.dispatch(Action::PickProfilePicture {
             kind: ProfilePicture::Banner,
             path: "sky.png".into(),
+            crop: None,
         })
         .is_empty(),
         "a banner takes Nitro"
@@ -317,6 +320,7 @@ fn the_main_profile_is_edited_as_discords_profile_editor_does() {
             app.dispatch(Action::PickProfilePicture {
                 kind: ProfilePicture::Avatar,
                 path: "cat.gif".into(),
+                crop: None,
             })
             .len(),
             1
