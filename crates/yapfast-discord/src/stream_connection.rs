@@ -25,7 +25,7 @@ use crate::{
     congestion::{self, Controller},
     rtp::{self, Assembler, Codec, Orientation, Packetizer},
     stream::{self, StreamServer},
-    voice_connection::{Connection, Identity, lock, receive, send_json},
+    voice_connection::{Closed, Connection, Identity, lock, receive, send_json},
 };
 
 /// How often a viewer may ask for a keyframe while frames are lost.
@@ -45,6 +45,14 @@ const BURST: usize = 8;
 /// The sender reports the last round trips are measured against, by the
 /// time in them a receiver report echoes.
 const ECHOED: usize = 4;
+/// Drops in a row a watched stream connects again after. The network
+/// changing, as a VPN turning on or off, takes a few seconds to settle,
+/// which the tries span, each [`RETRY_WAIT`] longer than the one before.
+const RETRIES: u32 = 5;
+const RETRY_WAIT: Duration = Duration::from_secs(1);
+/// How long a connection holds before its drop no longer counts with those
+/// before.
+const STEADY: Duration = Duration::from_secs(60);
 
 /// The bit/s to pace a frame of `bytes` at, sending `fps` frames a second
 /// at `target` bit/s: 2.5 times the target, as libwebrtc's pacer, but fast
@@ -907,6 +915,9 @@ impl Video {
     }
 }
 
+/// Watches the stream until it's stopped, connecting again as its
+/// connection drops, as a call does: the network changing under it, as a
+/// VPN turning on or off, drops it.
 async fn receive_stream(
     server: &StreamServer,
     user: u64,
@@ -921,6 +932,103 @@ async fn receive_stream(
     mut stopped: oneshot::Receiver<()>,
 ) -> Result<()> {
     let mut connection = open(server, user, channel, Role::Receive, shared).await?;
+    let mut drops = 0;
+    loop {
+        let up = Instant::now();
+        let watched = receive_over(
+            &mut connection,
+            streamer_id,
+            shared,
+            (&frames, &sounds),
+            &mut stopped,
+        )
+        .await;
+        let Err(dropped) = watched else {
+            return Ok(());
+        };
+        // Drops count in a row: a connection that held a while starts the
+        // count again, so a long stream survives the odd blip.
+        if up.elapsed() >= STEADY {
+            drops = 0;
+        }
+        match reconnect(
+            server,
+            (user, channel),
+            shared,
+            dropped,
+            &mut drops,
+            &mut stopped,
+        )
+        .await?
+        {
+            Some(again) => connection = again,
+            None => return Ok(()),
+        }
+    }
+}
+
+/// Connects to the stream's server again after its connection dropped,
+/// from scratch: a new socket finds this account's address on the network
+/// it's on now, which a VPN turning on or off changes. Each try after the
+/// first waits longer; one that Discord refuses as over, or more than
+/// [`RETRIES`] in a row, ends the stream. None once it's stopped meanwhile.
+async fn reconnect(
+    server: &StreamServer,
+    (user, channel): (u64, u64),
+    shared: &Shared,
+    mut error: anyhow::Error,
+    drops: &mut u32,
+    stopped: &mut oneshot::Receiver<()>,
+) -> Result<Option<Connection>> {
+    loop {
+        *drops += 1;
+        if over(&error) || *drops > RETRIES {
+            return Err(error);
+        }
+        tracing::info!(
+            error = format!("{error:#}"),
+            drops = *drops,
+            "the stream's connection dropped; connecting again"
+        );
+        *lock(&shared.link) = Link::Connecting;
+        let wait = RETRY_WAIT * (*drops - 1);
+        let opened = tokio::select! {
+            _ = &mut *stopped => return Ok(None),
+            opened = async {
+                tokio::time::sleep(wait).await;
+                open(server, user, channel, Role::Receive, shared).await
+            } => opened,
+        };
+        match opened {
+            Ok(connection) => return Ok(Some(connection)),
+            Err(again) => error = again,
+        }
+    }
+}
+
+/// Whether the stream's server closed the connection to say this account
+/// can't watch any more, rather than the connection dropping: Discord's
+/// codes from 4000, but 4015, its voice server crashing, after which
+/// clients connect again.
+fn over(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<Closed>()
+        .and_then(|closed| closed.code)
+        .is_some_and(|code| code >= 4000 && code != 4015)
+}
+
+/// Watches the stream over one connection, until it's stopped (Ok) or the
+/// connection drops.
+async fn receive_over(
+    connection: &mut Connection,
+    streamer_id: u64,
+    shared: &Shared,
+    (frames, sounds): (
+        &channel::SyncSender<ReceivedFrame>,
+        &channel::SyncSender<Vec<u8>>,
+    ),
+    stopped: &mut oneshot::Receiver<()>,
+) -> Result<()> {
     let mut streamer = Streamer {
         codec: connection.codec,
         ..Streamer::default()
@@ -953,7 +1061,7 @@ async fn receive_stream(
     loop {
         let mut lost = false;
         tokio::select! {
-            _ = &mut stopped => {
+            _ = &mut *stopped => {
                 let _ = connection.ws.close(None).await;
                 return Ok(());
             }
@@ -1188,6 +1296,26 @@ mod tests {
         assert_eq!(
             due[BURST..],
             [Duration::from_millis(8), Duration::from_millis(9)]
+        );
+    }
+
+    #[test]
+    fn a_dropped_stream_connects_again_unless_discord_ended_it() {
+        let closed = |code| {
+            anyhow::Error::from(Closed {
+                code,
+                reason: String::new(),
+            })
+        };
+        assert!(!over(&closed(None)), "dropped without a goodbye");
+        assert!(!over(&anyhow::anyhow!("connection reset")), "the network");
+        assert!(!over(&closed(Some(1006))));
+        assert!(!over(&closed(Some(4015))), "its server crashed");
+        assert!(over(&closed(Some(4014))), "disconnected");
+        assert!(over(&closed(Some(4006))), "the session is over");
+        assert!(
+            over(&closed(Some(4004)).context("the voice server didn't take it")),
+            "however it's described"
         );
     }
 

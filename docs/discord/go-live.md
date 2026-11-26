@@ -319,6 +319,17 @@ leaves out, so a stream you watch never reaches one you share. Watching a
 stream from Discord's own client works: H264 with DAVE. Discord's client shows
 Yapfast's stream at 1080p with its sound, without the call's.
 
+The viewer's connection outlives the network changing under it, as a call's
+does: a VPN turning on or off drops its gateway and leaves its socket on an
+address that's gone. As the connection drops, the worker connects to the
+stream's server again from scratch, with the same token, so a new socket
+finds this account's address on the network it's on now; meanwhile the last
+picture stays, and the first keyframe after brings the stream back. A try
+that fails is tried again, each waiting a second longer, five in a row at
+most, which a connection that held a minute starts counting again. A close
+from Discord with a code from 4000, but 4015 (its server crashed), ends the
+stream as before: the stream or the session is over.
+
 The fake server (`testing/fake_discord.ts`) checks what a stream sends, without
 DAVE, and streams its recordings to viewers; its header lists the controls
 that add a viewer or change a stream's codec.

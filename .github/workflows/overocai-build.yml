@@ -91,7 +91,7 @@ jobs:
         run: nix develop path:./nix --command cargo clippy --locked --profile fast --workspace --all-targets -- -D warnings
       - name: The unit tests of what the branch changes
         run: |
-          nix develop path:./nix --command cargo test --locked --profile fast -p yapfast-discord --lib -- voice::tests:: call_connection::tests:: keywords::tests:: unread::tests::
+          nix develop path:./nix --command cargo test --locked --profile fast -p yapfast-discord --lib -- voice::tests:: call_connection::tests:: stream_connection::tests:: keywords::tests:: unread::tests::
           nix develop path:./nix --command cargo test --locked --profile fast -p yapfast-core --lib -- discord_audio::tests:: keybinds::tests:: own_profile::tests:: application::tests::profile_editor application::tests::media application::tests::timeline voice_message::tests::
           nix develop path:./nix --command cargo test --locked --profile fast -p yapfast-iced-kit --lib -- pan::tests::
           nix develop path:./nix --command cargo test --locked --profile fast -p yapfast-vst
