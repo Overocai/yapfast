@@ -23,9 +23,10 @@ use crate::{
 const DOT: f32 = 8.0;
 const DOT_ROOM: f32 = 16.0;
 
-/// Asks the voice effects for `request`; the window's drawn again once
-/// it's done, and the menu reads the chain as it stands.
-pub(in crate::call) fn ask(request: Request) -> Task<Message> {
+/// Asks the voice effects for `request`, from the menu or a keybind; the
+/// window's drawn again once it's done, and the menu reads the chain as it
+/// stands.
+pub(crate) fn ask(request: Request) -> Task<Message> {
     let (sender, receiver) = tokio::sync::oneshot::channel();
     voice_effects::request(
         request,

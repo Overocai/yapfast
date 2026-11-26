@@ -6,11 +6,14 @@
 //! watches them (`crate::keybinds`).
 
 use iced::{
-    Alignment, Border, Element, Length, Padding,
+    Alignment, Border, Element, Length, Padding, Task,
     keyboard::{self, Key as Pressed, Location, key},
     widget::{Space, button, column, container, row, text},
 };
-use yapfast_core::keybinds::{Action, Binding, Key, Recorder, Shortcut};
+use yapfast_core::{
+    keybinds::{Action, Binding, Key, Recorder, Shortcut},
+    voice_effects,
+};
 
 use super::{Drop, Event as SettingsEvent, Page, Settings};
 use crate::{
@@ -55,10 +58,28 @@ pub enum Event {
     Remove(usize),
     /// A row's action chosen, by its place in [`Action::OFFERED`].
     Action(usize, usize),
+    /// A row's voice effect chosen, by its place in the voice effects.
+    Effect(usize, usize),
 }
 
 fn keybind_message(event: Event) -> Message {
     crate::app::settings(SettingsEvent::Keybind(event))
+}
+
+/// Loads the voice effects kept, as the page shows a keybind for one of
+/// them, so it can list them; nothing loads for the page otherwise.
+pub(super) fn load_effects(cx: &Cx<'_>) -> Task<Message> {
+    let wanted = voice_effects::AVAILABLE
+        && cx
+            .layout
+            .keybinds
+            .iter()
+            .any(|binding| binding.action == Action::ToggleVoiceEffect);
+    if wanted {
+        super::voice::ask(voice_effects::Request::Start)
+    } else {
+        Task::none()
+    }
 }
 
 impl Settings {
@@ -124,12 +145,14 @@ impl Settings {
         cx.request(Request::Changed(Shown::Keybinds));
     }
 
-    pub(super) fn keybind_event(&mut self, event: Event, cx: &mut Cx<'_>) {
+    pub(super) fn keybind_event(&mut self, event: Event, cx: &mut Cx<'_>) -> Task<Message> {
         let keybinds = &mut cx.layout.keybinds;
+        // Choosing to toggle one voice effect lists them.
+        let mut list_effects = false;
         match event {
             Event::Enabled(row, enabled) => {
                 let Some(binding) = keybinds.get_mut(row) else {
-                    return;
+                    return Task::none();
                 };
                 binding.enabled = enabled;
                 self.record = None;
@@ -141,11 +164,12 @@ impl Settings {
                     action: Action::Unassigned,
                     enabled: true,
                     keys: None,
+                    effect: None,
                 });
             }
             Event::Remove(row) => {
                 if row >= keybinds.len() {
-                    return;
+                    return Task::none();
                 }
                 keybinds.remove(row);
                 self.record = None;
@@ -156,16 +180,32 @@ impl Settings {
                 let (Some(binding), Some(&action)) =
                     (keybinds.get_mut(row), Action::OFFERED.get(index))
                 else {
-                    return;
+                    return Task::none();
                 };
                 if binding.action == action {
-                    return;
+                    return Task::none();
                 }
                 binding.action = action;
+                list_effects = action == Action::ToggleVoiceEffect;
+            }
+            Event::Effect(row, index) => {
+                self.open = None;
+                let chain = voice_effects::view();
+                let (Some(binding), Some(slot)) = (keybinds.get_mut(row), chain.slots.get(index))
+                else {
+                    return Task::none();
+                };
+                tracing::info!(effect = %slot.name, "keybind's voice effect chosen");
+                binding.effect = Some(slot.path.clone());
             }
         }
         cx.keep("keybinds", &cx.layout.keybinds);
         cx.request(Request::Changed(Shown::Keybinds));
+        if list_effects {
+            load_effects(cx)
+        } else {
+            Task::none()
+        }
     }
 }
 
@@ -355,18 +395,67 @@ impl<'a> Page<'a> {
             Some(keybind_message(Event::Enabled(row, !binding.enabled))),
         );
         // Discord's row: the action, its keys, delete and the switch, with
-        // what the action does under them.
+        // what the action does under them; a voice effect's, which one.
         let mut body = column![
             row![actions, keys, remove, toggle]
                 .spacing(8)
-                .align_y(Alignment::Center),
-            form::note(theme, binding.action.description()),
+                .align_y(Alignment::Center)
         ]
         .spacing(8);
+        if binding.action == Action::ToggleVoiceEffect {
+            body = body.push(self.effect_choice(row, binding));
+        }
+        body = body.push(form::note(theme, binding.action.description()));
         if let Some(given) = self.cx.keybinds.given_note(&binding.shortcut_id()) {
             body = body.push(form::note(theme, given));
         }
         body.into()
+    }
+
+    /// Which voice effect a keybind toggles: the chain's plugins, by name,
+    /// and what's wrong while none of them is chosen.
+    fn effect_choice(self, row: usize, binding: &'a Binding) -> Element<'a, Message> {
+        let theme = self.cx.look.theme;
+        let chain = voice_effects::view();
+        let names: Vec<String> = chain.slots.iter().map(|slot| slot.name.clone()).collect();
+        let chosen = binding
+            .effect
+            .as_ref()
+            .and_then(|path| chain.slots.iter().position(|slot| &slot.path == path));
+        let effects = form::dropdown(
+            names,
+            chosen,
+            self.s.open == Some(Drop::KeybindEffect(row)),
+            crate::app::settings(SettingsEvent::Drop(Drop::KeybindEffect(row))),
+            move |index| keybind_message(Event::Effect(row, index)),
+        )
+        .height(38.0)
+        .view(self.cx.look);
+        let gone = || {
+            binding
+                .effect
+                .as_ref()
+                .and_then(|path| path.file_stem())
+                .map(|stem| stem.to_string_lossy().into_owned())
+                .unwrap_or_default()
+        };
+        let note = if chain.slots.is_empty() {
+            Some("Add VST plugins in Voice & Video first, then choose one here.".to_owned())
+        } else if binding.effect.is_none() {
+            Some("Choose the voice effect this keybind turns on and off.".to_owned())
+        } else if chosen.is_none() {
+            Some(format!(
+                "{} isn't among your voice effects any more. Choose another.",
+                gone()
+            ))
+        } else {
+            None
+        };
+        let mut choice = column![effects].spacing(4);
+        if let Some(note) = note {
+            choice = choice.push(form::note(theme, note));
+        }
+        choice.into()
     }
 }
 

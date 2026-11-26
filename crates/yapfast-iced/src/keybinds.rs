@@ -11,7 +11,10 @@ use iced::{
     Task,
     keyboard::{self, key},
 };
-use yapfast_core::keybinds::{Action, Status, TALK_SHORTCUT, Watched};
+use yapfast_core::{
+    keybinds::{Action, Status, TALK_SHORTCUT, Watched},
+    voice_effects::Request as VoiceEffects,
+};
 
 use crate::{
     app::{App, Message},
@@ -81,15 +84,19 @@ pub fn watched(layout: &Layout) -> Vec<Watched> {
         .filter(|binding| binding.enabled)
         .filter_map(|binding| {
             let keys = binding.keys.clone()?;
-            match binding.action {
-                Action::Unassigned => None,
-                Action::PushToTalk if !talking => None,
-                action => Some(Watched {
-                    id: binding.shortcut_id(),
-                    action,
-                    keys,
-                }),
-            }
+            let action = match binding.action {
+                Action::Unassigned => return None,
+                Action::PushToTalk if !talking => return None,
+                // Its plugin is found by the keybind as it fires.
+                Action::ToggleVoiceEffect if binding.effect.is_none() => return None,
+                Action::ToggleVoiceEffect => Action::VoiceEffectOf(binding.id),
+                action => action,
+            };
+            Some(Watched {
+                id: binding.shortcut_id(),
+                action,
+                keys,
+            })
         });
     talk.chain(others).collect()
 }
@@ -189,7 +196,25 @@ fn toggled(app: &mut App, action: Action) -> Task<Message> {
             app.requests.push(Request::Changed(Pref::Keybinds));
             Task::none()
         }
-        Action::Unassigned | Action::PushToTalk | Action::PushToMute => Task::none(),
+        // As the effects' menu does; the account card's button and the menu
+        // show how they stand once the plugins' thread is done.
+        Action::ToggleVoiceEffects => crate::call::popups::effects::ask(VoiceEffects::Toggle),
+        Action::VoiceEffectOf(id) => {
+            let effect = app
+                .layout
+                .keybinds
+                .iter()
+                .find(|binding| binding.id == id)
+                .and_then(|binding| binding.effect.clone());
+            match effect {
+                Some(path) => crate::call::popups::effects::ask(VoiceEffects::TogglePlugin(path)),
+                None => Task::none(),
+            }
+        }
+        Action::Unassigned
+        | Action::PushToTalk
+        | Action::PushToMute
+        | Action::ToggleVoiceEffect => Task::none(),
     }
 }
 

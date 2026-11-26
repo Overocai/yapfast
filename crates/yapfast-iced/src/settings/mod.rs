@@ -181,6 +181,8 @@ pub enum Drop {
     Start,
     /// A keybind's action, by its row.
     Keybind(usize),
+    /// The voice effect a keybind toggles, by its row.
+    KeybindEffect(usize),
 }
 
 /// Settings while open.
@@ -327,6 +329,9 @@ impl Settings {
             self.enter_voice(cx);
             effects = voice::look_for_effects();
         }
+        if section == Section::Keybinds && before != Some(Section::Keybinds) {
+            effects = keybinds::load_effects(cx);
+        }
         cx.touch();
         // Another page starts at its top.
         Task::batch([
@@ -409,7 +414,7 @@ impl Settings {
             Event::Font(event) => return self.font_event(event, cx),
             Event::Record(target, on) => self.record(target, on),
             Event::Heard(heard) => self.heard(heard, cx),
-            Event::Keybind(event) => self.keybind_event(event, cx),
+            Event::Keybind(event) => return self.keybind_event(event, cx),
         }
         Task::none()
     }

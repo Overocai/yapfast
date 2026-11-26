@@ -519,6 +519,11 @@ impl Host {
                 self.on = on;
                 self.changed();
             }
+            Request::Toggle => {
+                self.on = !self.on;
+                self.changed();
+            }
+            Request::TogglePlugin(path) => return self.toggle_plugin(&path),
             Request::Add(found) => return self.add(found),
             Request::Remove(id) => self.remove(id),
             Request::Move(from, to) => {
@@ -728,6 +733,22 @@ impl Host {
         self.entries[at] = entry;
         self.changed();
         failed.map_or(Ok(()), Err)
+    }
+
+    /// A keybind's plugin, by its file: heard (the chain on, it loaded and
+    /// not bypassed), it's bypassed; otherwise it runs, and the chain turns
+    /// on with it, as the others not bypassed do.
+    fn toggle_plugin(&mut self, path: &Path) -> Result<(), String> {
+        let Some(entry) = self.entries.iter().find(|entry| entry.kept.path == path) else {
+            tracing::info!(path = %path.display(), "a keybind's plugin isn't in the chain");
+            return Err("That plugin isn't among the voice effects any more.".into());
+        };
+        let id = entry.id;
+        let heard = self.on && entry.loaded.is_some() && !entry.kept.bypassed;
+        if !heard {
+            self.on = true;
+        }
+        self.bypass(id, heard)
     }
 
     /// Opens a plugin's editor in a window of its own, or brings it to the

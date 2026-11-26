@@ -64,6 +64,13 @@ pub enum Request {
     Start,
     /// Turns the chain on or off.
     On(bool),
+    /// Turns the chain off if it's on, and on if it's off, as a keybind
+    /// does: by how it stands once what was kept has loaded.
+    Toggle,
+    /// As a keybind does, for the plugin loaded from this file: bypasses
+    /// it while it's heard (the chain on, it running), and otherwise runs
+    /// it, turning the chain on too.
+    TogglePlugin(PathBuf),
     /// Loads a plugin at the chain's end.
     Add(Found),
     Remove(u64),

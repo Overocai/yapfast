@@ -75,7 +75,9 @@ the gate lets through goes through them; once it shuts, they're handed
 silence and their tail (a reverb's, a delay's) goes on out, for up to half a
 second, until it falls under -50 dBFS, the level others' audio counts as
 speech at: the call shows the account speaking all the while. The mic test
-plays them back too, in stereo.
+plays them back too, in stereo. Keybinds turn them all on or off (Toggle
+Voice Effects) or run and bypass one plugin (Toggle a Voice Effect); see
+[Keybinds](keybinds.md#in-settings).
 
 Settings look for plugins without loading them, where they install: the
 VST3 folders (`Common Files\VST3`, and the user's own) and the VST2 ones
@@ -117,8 +119,9 @@ Asking the thread for anything never waits on it: it starts without the
 window waiting for it, and what's asked before its hidden window is made is
 taken once it is.
 
-Nothing loads until a call opens the microphone or Settings shows Voice &
-video, and only when a chain is kept. A plugin runs in Yapfast's own
+Nothing loads until a call opens the microphone, Settings shows Voice &
+video or a keybind for one effect, or a keybind toggles them, and only
+when a chain is kept. A plugin runs in Yapfast's own
 process once it's been tried, so one that crashes later, as it runs, takes
 Yapfast with it.
 

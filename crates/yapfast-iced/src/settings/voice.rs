@@ -111,7 +111,7 @@ fn effects_message(event: Effects) -> Message {
 }
 
 /// Asks the voice effects' thread for `request`, and says how it went.
-fn ask(request: voice_effects::Request) -> Task<Message> {
+pub(super) fn ask(request: voice_effects::Request) -> Task<Message> {
     let (sender, receiver) = tokio::sync::oneshot::channel();
     voice_effects::request(
         request,

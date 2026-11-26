@@ -1,8 +1,8 @@
 # Keybinds
 
 Keys held together that do something in any app, as Discord's keybinds:
-push to talk, push to mute, toggling mute, deafen and the input mode. They
-work in Discord and Matrix calls alike.
+push to talk, push to mute, toggling mute, deafen and the input mode, and
+on Windows the voice effects. They work in Discord and Matrix calls alike.
 
 ## Built-in window shortcuts
 
@@ -55,6 +55,15 @@ The actions offered are Discord's Push to Talk
 talk or voice activity). Push to Talk does something only in push to talk,
 as in Discord, and is watched only then.
 
+On Windows two more follow, for the [voice effects](voice.md#voice-effects):
+Toggle Voice Effects turns them all on or off, and Toggle a Voice Effect
+runs or bypasses one plugin, chosen in a dropdown of the chain's plugins
+under its row; the page loads the chain kept to list them as it shows such
+a keybind. Turning a plugin on this way turns the effects on too, with the
+others that weren't bypassed. A keybind for one effect isn't watched until
+its plugin is chosen, and one whose plugin left the chain says so under
+its row and does nothing.
+
 Settings → Voice & video records the push-to-talk keybind, as Discord's page
 does: it's watched beside the page's (see
 [Discord's microphone](discord/voice.md#push-to-talk) for what push to talk
@@ -86,7 +95,9 @@ its last key, with the others before it in `with`:
 A single key is kept as before keybinds had more, and a build from then
 reads a combination as its last key: `layout.json` that fails to read loses
 every setting, so nothing here may fail on an older or newer file. An action
-from a later build reads as Unassigned. Each keybind's `id` names its shortcut
+from a later build reads as Unassigned. A keybind for one voice effect keeps
+its plugin's file as `effect` (`"action": "toggle_voice_effect", "effect":
+"C:\\...\\Pitch.vst3"`), which finds it in the chain however it's ordered. Each keybind's `id` names its shortcut
 for the portal (`keybind-<id>`), so the desktop keeps what it allowed when
 others are removed; the Voice page's is `push-to-talk`, as before.
 
@@ -116,7 +127,13 @@ keybinds change.
 Push to talk and push to mute set `yapfast_core::push_to_talk`'s atomics
 from that thread, so the microphone never waits on the window. Toggles go to
 the window's event loop and run as its mute and deafen buttons do, sounds
-included; Toggle VAD changes the Voice page's input mode.
+included; Toggle VAD changes the Voice page's input mode. The voice
+effects' toggles ask the plugins' thread as their menu does
+(`Request::Toggle`, `Request::TogglePlugin` with the plugin's file), which
+decides by how the chain stands once what was kept has loaded, so a press
+before any call works too. A keybind for one effect is watched as
+`Action::VoiceEffectOf`, its keybind's id, which is never kept: the window
+finds the plugin by it as the keys go down.
 
 ## Hearing keys in other apps
 

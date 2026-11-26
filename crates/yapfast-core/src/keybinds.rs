@@ -4,7 +4,7 @@
 //! a new one from the keys pressed, and the [`Status`] of where they work.
 //! The root crate's watcher watches them in every app.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -168,6 +168,15 @@ pub enum Action {
     ToggleDeafen,
     /// Switches between push to talk and voice activity.
     ToggleVoiceMode,
+    /// Turns the voice effects, the microphone's VST plugins, on or off.
+    ToggleVoiceEffects,
+    /// Runs or bypasses one voice effect: the keybind's [`Binding::effect`].
+    ToggleVoiceEffect,
+    /// [`Action::ToggleVoiceEffect`] as it's watched: the keybind's
+    /// [`Binding::id`], by which the window finds its plugin as it fires.
+    /// Never kept.
+    #[serde(skip)]
+    VoiceEffectOf(u32),
     /// Does nothing, as a keybind just added; an action from a later
     /// build reads as this, so it's last.
     #[default]
@@ -176,15 +185,25 @@ pub enum Action {
 }
 
 impl Action {
-    /// The actions settings offer, in Discord's order.
-    pub const OFFERED: [Action; 6] = [
-        Action::Unassigned,
-        Action::PushToTalk,
-        Action::PushToMute,
-        Action::ToggleMute,
-        Action::ToggleDeafen,
-        Action::ToggleVoiceMode,
-    ];
+    /// The actions settings offer, in Discord's order, then the voice
+    /// effects' where they run.
+    pub const OFFERED: &[Action] = {
+        const EVERY: &[Action] = &[
+            Action::Unassigned,
+            Action::PushToTalk,
+            Action::PushToMute,
+            Action::ToggleMute,
+            Action::ToggleDeafen,
+            Action::ToggleVoiceMode,
+            Action::ToggleVoiceEffects,
+            Action::ToggleVoiceEffect,
+        ];
+        if crate::voice_effects::AVAILABLE {
+            EVERY
+        } else {
+            EVERY.split_at(EVERY.len() - 2).0
+        }
+    };
 
     /// Its name, as Discord's settings give it; the portal shows it.
     pub fn label(self) -> &'static str {
@@ -195,6 +214,8 @@ impl Action {
             Action::ToggleMute => "Toggle Mute",
             Action::ToggleDeafen => "Toggle Deafen",
             Action::ToggleVoiceMode => "Toggle VAD",
+            Action::ToggleVoiceEffects => "Toggle Voice Effects",
+            Action::ToggleVoiceEffect | Action::VoiceEffectOf(_) => "Toggle a Voice Effect",
         }
     }
 
@@ -216,6 +237,12 @@ impl Action {
             }
             Action::ToggleVoiceMode => {
                 "Toggle to switch between Push To Talk and Voice Activity mode."
+            }
+            Action::ToggleVoiceEffects => {
+                "Toggle your voice effects, the VST plugins your microphone runs through, on and off."
+            }
+            Action::ToggleVoiceEffect | Action::VoiceEffectOf(_) => {
+                "Toggle the voice effect chosen below on and off. Turning it on turns Voice Effects on too."
             }
         }
     }
@@ -249,6 +276,10 @@ pub struct Binding {
     /// None until recorded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub keys: Option<Shortcut>,
+    /// The plugin [`Action::ToggleVoiceEffect`] runs or bypasses, by the
+    /// file the voice effects load it from; none until chosen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effect: Option<PathBuf>,
 }
 
 fn binding_enabled() -> bool {
@@ -494,11 +525,40 @@ mod tests {
                 id: 2,
                 action: Action::ToggleDeafen,
                 enabled: true,
-                keys: None
+                keys: None,
+                effect: None,
             })
             .unwrap(),
             serde_json::json!({ "id": 2, "action": "toggle_deafen", "enabled": true })
         );
+    }
+
+    #[test]
+    fn a_voice_effect_keybind_keeps_its_plugin_and_is_watched_by_its_id() {
+        let binding: Binding = serde_json::from_value(serde_json::json!({
+            "id": 3, "action": "toggle_voice_effect", "effect": "C:\\VST3\\Pitch.vst3"
+        }))
+        .unwrap();
+        assert_eq!(binding.action, Action::ToggleVoiceEffect);
+        assert_eq!(binding.effect, Some(PathBuf::from("C:\\VST3\\Pitch.vst3")));
+        let all: Binding = serde_json::from_value(
+            serde_json::json!({ "id": 4, "action": "toggle_voice_effects" }),
+        )
+        .unwrap();
+        assert_eq!(all.action, Action::ToggleVoiceEffects);
+        assert_eq!(all.effect, None);
+        // What's watched is never kept: it names the keybind, not the plugin.
+        assert!(serde_json::to_value(Action::VoiceEffectOf(3)).is_err());
+        assert_eq!(
+            Action::VoiceEffectOf(3).label(),
+            Action::ToggleVoiceEffect.label()
+        );
+        assert!(!Action::ToggleVoiceEffects.holds());
+        assert_eq!(
+            Action::OFFERED.contains(&Action::ToggleVoiceEffect),
+            crate::voice_effects::AVAILABLE
+        );
+        assert!(!Action::OFFERED.contains(&Action::VoiceEffectOf(3)));
     }
 
     #[test]

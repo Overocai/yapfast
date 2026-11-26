@@ -62,9 +62,12 @@ recording. Each change is kept at once in
   Record keybind records it as the Keybinds page records one (below).
 - Keybinds (`keybinds.rs`), as Discord's page: Custom Keybinds with Add
   a Keybind beside its title, and each keybind in a row with its action
-  (Discord's six), its recorded keys and an inline Record/Stop button, a
+  (Discord's six, and on Windows the voice effects' two), its recorded
+  keys and an inline Record/Stop button, a
   delete button and an enable switch, with Discord's words for what the
-  action does under it. Disabling keeps the recorded keys but removes the
+  action does under it. Toggle a Voice Effect adds a dropdown of the
+  voice effects' plugins under its row, which the page loads as it shows
+  one (`load_effects`). Disabling keeps the recorded keys but removes the
   binding from the watcher. Each row also says what the desktop gave it
   while the desktop runs them; over them, where keybinds work. Recording takes the keys pressed
   together, wherever the keys are, up to four, showing them as they're
@@ -76,8 +79,8 @@ recording. Each change is kept at once in
   `layout.json` as `keybinds`. While one records, keybinds rest (the root
   crate's `pause`). The root crate's watcher watches push to talk's and
   the page's as one list, started again as they change; a toggle's press
-  comes as a message and mutes, deafens or switches the input mode as
-  its button does. [Keybinds](../keybinds.md) has the rest.
+  comes as a message and mutes, deafens, switches the input mode or the
+  voice effects as its button does. [Keybinds](../keybinds.md) has the rest.
   Default Keybinds follows, as Discord's list (`shortcuts::GROUPS`, its
   words and order, keeping those the app has): the shortcut-list key on
   its own, then Messages, Navigation, Chat, Voice and Video, and
