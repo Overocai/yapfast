@@ -153,7 +153,7 @@ use yapfast_core::{application::Action, runtime::BackgroundRuntime};
 use crate::{app::App, client::Client};
 pub use desktop::{
     Desktop, Drag, Heard, IconChoice, IconTarget, Notifier, Offered, PasteReader, PointerAt, Tell,
-    Toggled, Tray, TrayChoice, UpdateChoices, UpdateStatus, Updates, UpdatesShown,
+    Toggled, Tray, TrayCall, TrayChoice, UpdateChoices, UpdateStatus, Updates, UpdatesShown,
 };
 /// The window the desktop's parts act on, by its handles.
 pub use iced::window::Window;

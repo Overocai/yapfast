@@ -89,7 +89,12 @@ tell the window what they hear through a `Tell`, from threads of their
 own, which a stream hands to the event loop as messages; nothing polls.
 
 - The tray (`shell.rs`): its icon, with the unread dot for a mention or an
-  unread DM, and Disconnect in its menu during a call; Open Yapfast, and a
+  unread DM. During a call it shows the call in its place, as Discord's
+  tray does (`TrayCall`, from the call's own participant): a grey dot, a
+  green one while this account speaks, or the microphone or the
+  headphones in white struck through in red while muted (by itself, the
+  server, or not let speak) or deafened, with its tooltip saying which,
+  and Disconnect in its menu. Open Yapfast, and a
   click on it, brings the window back with the click's activation token.
   Closing to it closes Settings as their own button does, and the call's
   popup with the microphone its level reads; the call's cameras make no

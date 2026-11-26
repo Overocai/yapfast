@@ -15,7 +15,7 @@ use super::{change, interact, preview, shows, unread};
 use crate::{
     app::{App, Message},
     controls::Check,
-    desktop::{ABOUT, Heard, Tray, TrayChoice},
+    desktop::{ABOUT, Heard, Tray, TrayCall, TrayChoice},
     settings::Section,
     shell::Event,
     window_bar,
@@ -32,7 +32,7 @@ impl Tray for Kept {
         self.available
     }
 
-    fn show(&self, unread: bool, _call: bool) {
+    fn show(&self, unread: bool, _call: TrayCall) {
         self.shown.lock().expect("shown").push(unread);
     }
 }

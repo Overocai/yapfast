@@ -2,8 +2,13 @@
 //! closed: a StatusNotifierItem on Linux, on the session bus Yapfast is given,
 //! and a notification-area icon on Windows. Clicking it opens the window; its
 //! menu opens Yapfast, leaves a call, checks for updates, restarts and quits.
+//! During a call it shows the call instead, as Discord's tray does: a grey
+//! dot, a green one while this account speaks, or the microphone or the
+//! headphones struck through while muted or deafened.
 
 use std::cell::Cell;
+
+use yapfast_iced::TrayCall;
 
 use crate::icon::Artwork;
 
@@ -46,8 +51,55 @@ pub enum Choice {
 pub struct Shown {
     /// A mention or a DM waits unread: the icon has a dot.
     pub unread: bool,
-    /// In a call: the menu offers Disconnect.
-    pub call: bool,
+    /// In a call: the call's icon in place of Yapfast's, and the menu
+    /// offers Disconnect.
+    pub call: TrayCall,
+}
+
+/// The calls' pictures, after Yapfast's icon without the unread dot and
+/// with it.
+const CALLS: [TrayCall; 4] = [
+    TrayCall::Connected,
+    TrayCall::Speaking,
+    TrayCall::Muted,
+    TrayCall::Deafened,
+];
+/// How many pictures the tray keeps, numbered as [`picture`] makes them.
+const ICONS: usize = 2 + CALLS.len();
+
+impl Shown {
+    /// The picture shown, numbered as [`picture`] makes them: the call's
+    /// during one, whatever waits unread, as in Discord.
+    fn icon(self) -> usize {
+        match CALLS.iter().position(|&call| call == self.call) {
+            Some(at) => 2 + at,
+            None => usize::from(self.unread),
+        }
+    }
+
+    fn in_call(self) -> bool {
+        self.call != TrayCall::None
+    }
+
+    /// What the tooltip says of the call, during one.
+    fn call_words(self) -> Option<&'static str> {
+        match self.call {
+            TrayCall::None => None,
+            TrayCall::Connected | TrayCall::Speaking => Some("In a call"),
+            TrayCall::Muted => Some("Muted"),
+            TrayCall::Deafened => Some("Deafened"),
+        }
+    }
+}
+
+/// The tray's picture `icon`, `size` pixels across: Yapfast's icon without
+/// the unread dot (0) and with it (1), then each of [`CALLS`].
+#[cfg(any(target_os = "linux", windows))]
+fn picture(artwork: &Artwork, size: u32, icon: usize) -> Option<crate::icon::Rgba> {
+    match icon {
+        0 | 1 => artwork.tray(size, icon == 1),
+        _ => crate::icon::call_tray(size, *CALLS.get(icon - 2)?),
+    }
 }
 
 /// Where the tray's choices go. It runs off the window's event loop, so it
@@ -76,8 +128,8 @@ impl Tray {
         self.platform.available()
     }
 
-    /// Shows the unread dot and the call's Disconnect, telling the tray only
-    /// when they change.
+    /// Shows the unread dot, or the call's icon and Disconnect, telling the
+    /// tray only when they change.
     pub fn show(&self, shown: Shown) {
         if self.shown.replace(shown) != shown {
             self.platform.show(shown);
@@ -141,14 +193,14 @@ mod linux {
 
     use ksni::{MenuItem, menu::StandardItem};
 
-    use super::{Artwork, Choice, Shown};
+    use super::{Artwork, Choice, ICONS, Shown};
 
     /// The tray's sizes of the icon; the tray scales the nearest.
     const SIZES: [u32; 2] = [32, 64];
 
     enum Update {
         Shown(Shown),
-        Icons([Vec<ksni::Icon>; 2]),
+        Icons([Vec<ksni::Icon>; ICONS]),
     }
 
     pub struct Tray {
@@ -191,11 +243,11 @@ mod linux {
         }
     }
 
-    fn icons(artwork: &Artwork) -> [Vec<ksni::Icon>; 2] {
-        [false, true].map(|unread| {
+    fn icons(artwork: &Artwork) -> [Vec<ksni::Icon>; ICONS] {
+        std::array::from_fn(|which| {
             SIZES
                 .into_iter()
-                .filter_map(|size| artwork.tray(size, unread))
+                .filter_map(|size| super::picture(artwork, size, which))
                 .map(|mut icon| {
                     // ARGB, in network byte order.
                     for pixel in icon.pixels.as_chunks_mut::<4>().0 {
@@ -241,8 +293,8 @@ mod linux {
 
     struct Item {
         shown: Shown,
-        /// The icon without the unread dot, and with it.
-        icons: [Vec<ksni::Icon>; 2],
+        /// The tray's pictures, numbered as `super::picture` makes them.
+        icons: [Vec<ksni::Icon>; ICONS],
         chosen: super::Chosen,
         online: Arc<AtomicBool>,
     }
@@ -274,17 +326,18 @@ mod linux {
         }
 
         fn icon_pixmap(&self) -> Vec<ksni::Icon> {
-            self.icons[usize::from(self.shown.unread)].clone()
+            self.icons[self.shown.icon()].clone()
         }
 
         fn tool_tip(&self) -> ksni::ToolTip {
+            let description = match self.shown.call_words() {
+                Some(words) => words,
+                None if self.shown.unread => "Unread messages",
+                None => "",
+            };
             ksni::ToolTip {
                 title: "Yapfast".into(),
-                description: if self.shown.unread {
-                    "Unread messages".into()
-                } else {
-                    String::new()
-                },
+                description: description.into(),
                 ..Default::default()
             }
         }
@@ -303,7 +356,7 @@ mod linux {
                 .into()
             };
             let mut menu = vec![item("Open Yapfast", Choice::Open)];
-            if self.shown.call {
+            if self.shown.in_call() {
                 menu.push(item("Disconnect", Choice::Disconnect));
             }
             menu.push(MenuItem::Separator);
@@ -357,7 +410,7 @@ mod windows {
         w,
     };
 
-    use super::{Artwork, Choice, Shown};
+    use super::{Artwork, Choice, ICONS, Shown};
     use crate::icon::NativeIcon;
 
     /// The message the icon sends the hidden window with what happened to it.
@@ -382,8 +435,8 @@ mod windows {
         data: NOTIFYICONDATAW,
         /// The notification area shows it.
         added: bool,
-        /// Without the unread dot, and with it.
-        icons: [NativeIcon; 2],
+        /// The tray's pictures, numbered as `super::picture` makes them.
+        icons: [NativeIcon; ICONS],
         shown: Shown,
         chosen: super::Chosen,
     }
@@ -437,9 +490,7 @@ mod windows {
                     hIcon: icons[0].0,
                     ..std::mem::zeroed()
                 };
-                for (place, unit) in data.szTip.iter_mut().zip("Yapfast".encode_utf16()) {
-                    *place = unit;
-                }
+                set_tip(&mut data, Shown::default());
                 let added = notify(NIM_ADD, &data);
                 if !added {
                     tracing::info!("no notification area; closing the window quits Yapfast");
@@ -463,7 +514,8 @@ mod windows {
             let data = ICON.with_borrow_mut(|icon| {
                 let icon = icon.as_mut()?;
                 icon.shown = shown;
-                icon.data.hIcon = icon.icons[usize::from(shown.unread)].0;
+                icon.data.hIcon = icon.icons[shown.icon()].0;
+                set_tip(&mut icon.data, shown);
                 Some(icon.data)
             });
             if let Some(data) = data {
@@ -477,7 +529,7 @@ mod windows {
             };
             let update = ICON.with_borrow_mut(|icon| {
                 let icon = icon.as_mut()?;
-                icon.data.hIcon = icons[usize::from(icon.shown.unread)].0;
+                icon.data.hIcon = icons[icon.shown.icon()].0;
                 let previous = std::mem::replace(&mut icon.icons, icons);
                 Some((icon.data, previous))
             });
@@ -505,13 +557,30 @@ mod windows {
         unsafe { Shell_NotifyIconW(message, data) != 0 }
     }
 
-    fn icons(artwork: &Artwork) -> Option<[NativeIcon; 2]> {
+    fn icons(artwork: &Artwork) -> Option<[NativeIcon; ICONS]> {
         // SAFETY: the metric has no pointer arguments and is a system icon size.
         let size = unsafe { GetSystemMetrics(SM_CXSMICON) }.clamp(16, 256) as u32;
-        Some([
-            NativeIcon::from_rgba(artwork.tray(size, false)?)?,
-            NativeIcon::from_rgba(artwork.tray(size, true)?)?,
-        ])
+        let mut icons = Vec::with_capacity(ICONS);
+        for which in 0..ICONS {
+            icons.push(NativeIcon::from_rgba(super::picture(
+                artwork, size, which,
+            )?)?);
+        }
+        icons.try_into().ok()
+    }
+
+    /// The tooltip: Yapfast, and during a call how this account is in it.
+    fn set_tip(data: &mut NOTIFYICONDATAW, shown: Shown) {
+        let tip = match shown.call_words() {
+            Some(words) => format!("Yapfast \u{2014} {words}"),
+            None => "Yapfast".to_owned(),
+        };
+        data.szTip.fill(0);
+        // The last unit stays the terminating null.
+        let room = data.szTip.len() - 1;
+        for (place, unit) in data.szTip[..room].iter_mut().zip(tip.encode_utf16()) {
+            *place = unit;
+        }
     }
 
     unsafe extern "system" fn procedure(
@@ -555,7 +624,7 @@ mod windows {
 
     /// The icon's menu, at the pointer.
     fn menu(window: HWND) {
-        let call = ICON.with_borrow(|icon| icon.as_ref().is_some_and(|icon| icon.shown.call));
+        let call = ICON.with_borrow(|icon| icon.as_ref().is_some_and(|icon| icon.shown.in_call()));
         // SAFETY: the menu is made, shown and destroyed here, for a window of
         // this thread.
         let picked = unsafe {
@@ -667,5 +736,42 @@ mod tests {
         // The dot is in the bottom-right corner.
         let corner = (24 * 32 + 24) * 4;
         assert!(red(&unread.pixels[corner..corner + 4]));
+    }
+
+    #[test]
+    fn a_call_shows_how_this_account_is_in_it_in_place_of_the_logo() {
+        use yapfast_iced::TrayCall;
+        let shown = |call| super::Shown { unread: true, call };
+        assert_eq!(shown(TrayCall::None).icon(), 1, "out of a call, the dot");
+        let picture =
+            |call| super::picture(&super::Artwork::Default, 32, shown(call).icon()).expect("drawn");
+        let pixels = |drawn: &crate::icon::Rgba| drawn.pixels.as_chunks::<4>().0.to_vec();
+        let middle = |drawn: &crate::icon::Rgba| pixels(drawn)[16 * 32 + 16];
+        assert_eq!(
+            middle(&picture(TrayCall::Speaking)),
+            [0x23, 0xa5, 0x5a, 255],
+            "green"
+        );
+        assert_eq!(
+            middle(&picture(TrayCall::Connected)),
+            [0xb5, 0xba, 0xc1, 255],
+            "grey"
+        );
+        for call in [TrayCall::Muted, TrayCall::Deafened] {
+            let struck = pixels(&picture(call));
+            assert!(
+                struck.contains(&[0xf2, 0x3f, 0x43, 255]),
+                "{call:?} is struck in red"
+            );
+            assert!(
+                struck.contains(&[0xff, 0xff, 0xff, 255]),
+                "{call:?} is drawn in white"
+            );
+        }
+        assert_ne!(
+            shown(TrayCall::Muted).icon(),
+            shown(TrayCall::Deafened).icon()
+        );
+        assert!(super::picture(&super::Artwork::Default, 32, super::ICONS).is_none());
     }
 }

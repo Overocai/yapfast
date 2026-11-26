@@ -172,6 +172,37 @@ impl Artwork {
     }
 }
 
+/// The tray's icon during a call, in place of Yapfast's, as Discord's tray
+/// shows its call: a grey dot while connected, a green one while this
+/// account speaks, and the microphone or the headphones struck through in
+/// red while muted or deafened. None out of a call.
+pub fn call_tray(size: u32, call: yapfast_iced::TrayCall) -> Option<Rgba> {
+    use yapfast_iced::TrayCall;
+    let dot = |fill: &str| {
+        format!(
+            r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="{fill}"/></svg>"##
+        )
+    };
+    // The kit's icon in white, its slash in red and a little bolder.
+    let struck = |svg: &str| {
+        svg.replace("currentColor", "#fff").replacen(
+            r##"stroke="#fff" stroke-linecap="round" stroke-width="2" d="m3 3 18 18""##,
+            r##"stroke="#f23f43" stroke-linecap="round" stroke-width="3" d="m3 3 18 18""##,
+            1,
+        )
+    };
+    let svg = match call {
+        TrayCall::None => return None,
+        TrayCall::Connected => dot("#b5bac1"),
+        TrayCall::Speaking => dot("#23a55a"),
+        TrayCall::Muted => struck(include_str!("../crates/yapfast-iced-kit/icons/mic-off.svg")),
+        TrayCall::Deafened => struck(include_str!(
+            "../crates/yapfast-iced-kit/icons/headphone-off.svg"
+        )),
+    };
+    rasterize(svg.as_bytes(), size)
+}
+
 fn scale(image: &RgbaImage, size: u32) -> RgbaImage {
     imageops::resize(image, size, size, imageops::FilterType::Lanczos3)
 }

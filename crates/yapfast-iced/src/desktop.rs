@@ -92,9 +92,24 @@ pub const ABOUT: &str = "yapfast:about";
 pub trait Tray {
     /// A tray shows the icon now, so the window can close into it.
     fn available(&self) -> bool;
-    /// The unread dot, and Disconnect in its menu during a call.
-    fn show(&self, unread: bool, call: bool);
+    /// The unread dot; during a call, the call's icon in place of Yapfast's
+    /// and Disconnect in its menu.
+    fn show(&self, unread: bool, call: TrayCall);
     fn set_icon(&self, _root: &Path, _source: IconTarget, _choice: &IconChoice) {}
+}
+
+/// This account in a call, as the tray's icon shows it, as Discord's tray
+/// does: a grey dot while connected, a green one while it speaks, and the
+/// microphone or the headphones struck through while muted or deafened.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TrayCall {
+    /// Not in a call: Yapfast's own icon, with the unread dot.
+    #[default]
+    None,
+    Connected,
+    Speaking,
+    Muted,
+    Deafened,
 }
 
 /// Shows desktop notifications.

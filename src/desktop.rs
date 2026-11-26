@@ -13,8 +13,8 @@ use std::{
 
 use yapfast_core::{chat::Alert, runtime::BackgroundRuntime};
 use yapfast_iced::{
-    Heard, IconChoice, IconTarget, Offered, Tell, TrayChoice, UpdateChoices, UpdateStatus,
-    UpdatesShown,
+    Heard, IconChoice, IconTarget, Offered, Tell, TrayCall, TrayChoice, UpdateChoices,
+    UpdateStatus, UpdatesShown,
 };
 
 use crate::{
@@ -141,7 +141,7 @@ impl yapfast_iced::Tray for Tray {
         self.0.available()
     }
 
-    fn show(&self, unread: bool, call: bool) {
+    fn show(&self, unread: bool, call: TrayCall) {
         self.0.show(crate::tray::Shown { unread, call });
     }
 

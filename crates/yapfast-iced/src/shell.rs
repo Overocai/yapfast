@@ -16,7 +16,7 @@ use yapfast_core::{application::Action, chat::Alert, sounds::Sound, voice, zoom}
 use crate::{
     after,
     app::{App, Message},
-    desktop::{self, ABOUT, Heard, IconTarget, Notifier, Tell, Tray, TrayChoice},
+    desktop::{self, ABOUT, Heard, IconTarget, Notifier, Tell, Tray, TrayCall, TrayChoice},
 };
 
 /// The least size the window lays out in.
@@ -158,10 +158,7 @@ impl App {
         self.shell.fixed_size = start.fixed_size;
         self.place_as_kept();
         if let Some(tray) = &self.shell.tray {
-            tray.show(
-                self.desktop_unread() > 0,
-                self.client.state().voice.active(),
-            );
+            tray.show(self.desktop_unread() > 0, self.tray_call());
         }
         // Once at start with the check on.
         if self.layout.prefs.check_for_updates {
@@ -745,6 +742,26 @@ impl App {
         iced::exit()
     }
 
+    /// This account in its call, as the tray's icon shows it: deafened,
+    /// muted (by itself or the server, or not let speak), speaking, or
+    /// just there.
+    fn tray_call(&self) -> TrayCall {
+        let voice = &self.client.state().voice;
+        if !voice.active() {
+            return TrayCall::None;
+        }
+        let me = voice.participants.iter().find(|person| person.local);
+        if voice.deafened || me.is_some_and(|me| me.deafened) {
+            TrayCall::Deafened
+        } else if voice.muted || me.is_some_and(|me| me.muted || me.speaking_blocked) {
+            TrayCall::Muted
+        } else if me.is_some_and(|me| me.speaking) {
+            TrayCall::Speaking
+        } else {
+            TrayCall::Connected
+        }
+    }
+
     /// Discord already counts DM messages as mentions. Fall back to the
     /// unread state for unmuted DMs when there is no count.
     fn desktop_unread(&self) -> u8 {
@@ -773,7 +790,7 @@ impl App {
             0
         };
         if let Some(tray) = &self.shell.tray {
-            tray.show(unread > 0, self.client.state().voice.active());
+            tray.show(unread > 0, self.tray_call());
         }
         let mut tasks = Vec::new();
         #[cfg(windows)]
