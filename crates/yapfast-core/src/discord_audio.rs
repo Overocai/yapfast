@@ -21,7 +21,7 @@ use std::{
 
 use anyhow::{Context, Result, anyhow};
 use livekit::webrtc::native::apm::AudioProcessingModule;
-use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::{Notify, mpsc::UnboundedSender};
 use yapfast_discord::voice::{CHANNELS, FRAME, Listener, Microphone, SAMPLE_RATE, Surplus, Track};
 
 use crate::{
@@ -78,8 +78,10 @@ fn monitor_gain() -> f32 {
     f32::from_bits(MONITOR_GAIN.load(Ordering::Relaxed))
 }
 
-/// Someone counts as speaking for this long after their last loud frame.
-const SPEAKING_HOLD: Duration = Duration::from_millis(300);
+/// Someone counts as speaking for this long after their last loud frame:
+/// long enough to bridge the gaps between words, short enough that the ring
+/// goes as the voice does.
+const SPEAKING_HOLD: Duration = Duration::from_millis(250);
 /// Frames quieter than this, in RMS dBFS, don't count as speech.
 const SPEAKING_FLOOR: f32 = -50.0;
 
@@ -89,6 +91,10 @@ pub struct Hearing {
     output: Mutex<Option<SyncSender<Vec<i16>>>>,
     deafened: AtomicBool,
     heard: Mutex<HashMap<u64, Instant>>,
+    /// Wakes the call as someone starts or stops being heard, and as this
+    /// account's microphone starts or stops sending, so the speaking rings
+    /// follow the sound rather than the call's next look.
+    speech: Arc<Notify>,
     sounds: Mutex<Vec<Playing>>,
     ended: UnboundedSender<String>,
 }
@@ -110,9 +116,21 @@ impl Hearing {
             output: Mutex::default(),
             deafened: AtomicBool::new(false),
             heard: Mutex::default(),
+            speech: Arc::default(),
             sounds: Mutex::default(),
             ended,
         }
+    }
+
+    /// What wakes the call as speaking starts or stops, for the
+    /// microphone's thread to wake it too.
+    pub fn speech(&self) -> Arc<Notify> {
+        self.speech.clone()
+    }
+
+    /// Waits until someone starts or stops speaking, this account included.
+    pub async fn speech_changed(&self) {
+        self.speech.notified().await;
     }
 
     pub fn set_output(&self, output: Option<SyncSender<Vec<i16>>>) {
@@ -158,10 +176,20 @@ impl Listener for Hearing {
         let now = Instant::now();
         {
             let mut heard = self.heard.lock().unwrap();
+            let mut changed = false;
             for (user, samples) in voices {
                 if decibels(samples) > SPEAKING_FLOOR {
-                    heard.insert(*user, now);
+                    changed |= heard.insert(*user, now).is_none();
                 }
+            }
+            // Someone quiet for the hold stops speaking now, as heard.
+            heard.retain(|_, at| {
+                let speaking = now.duration_since(*at) < SPEAKING_HOLD;
+                changed |= !speaking;
+                speaking
+            });
+            if changed {
+                self.speech.notify_one();
             }
         }
         if self.deafened.load(Ordering::Relaxed) {
@@ -286,8 +314,10 @@ const NOT_SPEECH: f32 = 18.0;
 /// estimate takes it for speech: one such block opened the gate on 7 of 33
 /// mouse clicks, two on 4. While open, one block holds it.
 const OPEN_AFTER: u32 = 3;
-/// It stays open this many 10 ms blocks after the last that would open it.
-const GATE_HOLD: u32 = 40;
+/// It stays open this many 10 ms blocks after the last that would open it:
+/// 300 ms, which bridges the gaps between words; the 100 ms kept from
+/// before it opens again saves the start of a word after a longer pause.
+const GATE_HOLD: u32 = 30;
 /// Blocks kept from before the gate opens and sent when it does: a word's
 /// quiet start, such as an "h", comes before it's loud or clear enough to open
 /// it. Speech goes out this much later while the gate stays open.
@@ -413,6 +443,8 @@ struct CaptureRequest {
     track: Track,
     stop: Arc<AtomicBool>,
     talking: Arc<AtomicBool>,
+    /// Woken as `talking` changes, so the call shows it at once.
+    speech: Arc<Notify>,
     /// Muted, the call gets none of it, and Hear Yourself alone plays it.
     muted: Arc<AtomicBool>,
     opened: mpsc::SyncSender<Result<()>>,
@@ -627,9 +659,12 @@ const _: () = assert!(BLOCK == crate::noise::BLOCK);
 /// A block of a stereo microphone, interleaved.
 const WIDE: usize = BLOCK * 2;
 /// How long the voice effects' tail (a reverb's, a delay's) may ring on
-/// after the gate shuts, in blocks, and how quiet ends it sooner: -60 dBFS.
-const TAIL_BLOCKS: usize = 300;
-const TAIL_FLOOR: f32 = 0.001;
+/// after the gate shuts, in blocks: half a second, as the call shows the
+/// account speaking all the while, even through a plugin that hisses on
+/// silence. A block quieter than speech, -50 dBFS RMS as others' frames
+/// count ([`SPEAKING_FLOOR`]), ends it sooner.
+const TAIL_BLOCKS: usize = 50;
+const TAIL_FLOOR: f32 = 0.003_16;
 /// The blocks of a stereo microphone kept as read: those the gate keeps
 /// from before it opens, and a pair.
 const WIDE_KEPT: usize = BEFORE_OPENING + PAIR;
@@ -1167,14 +1202,16 @@ fn measure(
 
 /// Opens the microphone on `thread` and sends its processed audio while
 /// someone talks: the track plays while the gate is open and pauses
-/// otherwise, so Discord shows speaking only during speech. Opened `muted`,
-/// for Hear Yourself, it sends nothing until it's unmuted.
+/// otherwise, so Discord shows speaking only during speech. `speech` is
+/// woken as it starts or stops sending. Opened `muted`, for Hear Yourself,
+/// it sends nothing until it's unmuted.
 pub fn capture(
     thread: &MicrophoneThread,
     (microphone, speaker): (Option<&str>, Option<&str>),
     reverse: Reverse,
     out: Microphone,
     track: Track,
+    speech: Arc<Notify>,
     muted: bool,
 ) -> Result<Capture> {
     let (opened, result) = mpsc::sync_channel(1);
@@ -1189,6 +1226,7 @@ pub fn capture(
         track: track.clone(),
         stop: stop.clone(),
         talking: talking.clone(),
+        speech,
         muted: muted.clone(),
         opened,
     })?;
@@ -1300,6 +1338,8 @@ impl CaptureRequest {
             if sends != sending {
                 sending = sends;
                 self.talking.store(sending, Ordering::Relaxed);
+                // The rings show it now, rather than at the call's next look.
+                self.speech.notify_one();
                 let _ = if sending {
                     self.out.clear();
                     self.track.play()
@@ -1359,7 +1399,9 @@ impl CaptureRequest {
             pace.note(first_read, second - first - second_read);
             lightly = pace.note(second_read, second.elapsed());
         }
-        self.talking.store(false, Ordering::Relaxed);
+        if self.talking.swap(false, Ordering::Relaxed) {
+            self.speech.notify_one();
+        }
         let _ = self.track.pause();
         Some(processing.denoiser)
     }
@@ -1876,12 +1918,30 @@ mod tests {
 
     #[test]
     fn hearing_tracks_who_spoke() {
+        use futures_util::FutureExt as _;
         let (ended, _) = tokio::sync::mpsc::unbounded_channel();
         let hearing = Hearing::new(ended);
         let speech = vec![8_000i16; FRAME * 2];
         let hiss = vec![10i16; FRAME * 2];
         hearing.tick(&[(1, &speech), (2, &hiss)]);
         assert_eq!(hearing.speaking(), vec![1]);
+        assert!(
+            hearing.speech_changed().now_or_never().is_some(),
+            "starting to speak wakes the call"
+        );
+        hearing.tick(&[(1, &speech)]);
+        assert!(
+            hearing.speech_changed().now_or_never().is_none(),
+            "speaking on shows nothing new"
+        );
+        // Quiet for the hold, they stop as the call's audio goes on.
+        std::thread::sleep(SPEAKING_HOLD);
+        hearing.tick(&[(1, &hiss)]);
+        assert!(
+            hearing.speech_changed().now_or_never().is_some(),
+            "stopping wakes the call"
+        );
+        assert!(hearing.speaking().is_empty());
     }
 
     const MS: Duration = Duration::from_millis(1);

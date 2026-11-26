@@ -72,9 +72,10 @@ and VST3 effects, in the order Settings › Voice & video arranges them
 processing, in stereo at 48 kHz, 10 ms at a time: a mono microphone goes
 out in both channels, and while any plugin runs the call sends stereo. What
 the gate lets through goes through them; once it shuts, they're handed
-silence and their tail (a reverb's, a delay's) goes on out, for up to three
-seconds, until it falls under -60 dBFS. The mic test plays them back too,
-in stereo.
+silence and their tail (a reverb's, a delay's) goes on out, for up to half a
+second, until it falls under -50 dBFS, the level others' audio counts as
+speech at: the call shows the account speaking all the while. The mic test
+plays them back too, in stereo.
 
 Settings look for plugins without loading them, where they install: the
 VST3 folders (`Common Files\VST3`, and the user's own) and the VST2 ones

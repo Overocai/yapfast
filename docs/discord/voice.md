@@ -245,6 +245,13 @@ five silent frames Discord's clients send as they stop, and a speaking
 message saying they stopped, change nothing, and only after 100 ms with no
 packets do they drop out of the mix until they speak again.
 
+The speaking rings follow what's heard: someone speaks while their frames
+as played are louder than -50 dBFS, and for 250 ms after, which bridges the
+gaps between words. The call's thread wakes the call's task as anyone starts
+or stops (`Hearing::speech_changed`), and so does this account's microphone
+as it starts or stops sending, so the rings, the account panel's and the
+tray's change with the sound rather than at the task's next 150 ms look.
+
 A packet that DAVE drops, such as an unencrypted frame in an encrypted call
 outside a transition, plays as nothing rather than as a lost frame to
 conceal. NetEq plays by timestamp, so Discord's clients never conceal those
@@ -552,7 +559,7 @@ block but in a pause or while push to talk sends nothing, as libDF's command
 line does on every block. The library's defaults skip deep filtering above
 20 dB SNR, which dulled clean speech and took up to 5 dB off speech over a
 fan. A pause starts after 500 ms of blocks its SNR estimate puts below -10 dB,
-past the gate's 400 ms hold, and lasts until a block isn't: only its encoder
+past the gate's 300 ms hold, and lasts until a block isn't: only its encoder
 runs, a third of its work, and the block's gains are zero, which leaves the
 strength's mix of the microphone. A pair starts and ends a pause, and runs the
 decoders for both blocks when either isn't noise; in the comparison's mixes
@@ -613,7 +620,9 @@ lighter step.
 The voice gate opens on three blocks in a row that the suppressor takes for
 speech and that are louder than the input sensitivity, -60 dBFS unless changed,
 or that are 18 dB louder still. While open, each such block holds it another
-400 ms. What DeepFilterNet leaves of a mouse click comes out over two blocks,
+300 ms, which bridges the gaps between words; after a longer pause the 100 ms
+kept from before it opens again (below) saves the word's start. What
+DeepFilterNet leaves of a mouse click comes out over two blocks,
 since its frames overlap, louder than the sensitivity, and its estimate takes
 it for speech, so fewer than three blocks let clicks open the gate. Under
 speech, DeepFilterNet turns clicks down far less than in pauses; the declicker,

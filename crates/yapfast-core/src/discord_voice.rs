@@ -578,7 +578,7 @@ pub(crate) async fn call(
                     capture = None;
                 }
             } else if capture.is_none() && !unheard {
-                match open_discord_microphone(state, true, &reverse, &microphone, &track, &microphone_thread) {
+                match open_discord_microphone(state, true, &reverse, &microphone, &track, &microphone_thread, &hearing) {
                     Ok(opened) => capture = Some(opened),
                     Err(error) => {
                         tracing::warn!(error = format!("{error:#}"), "Hear Yourself couldn't open the microphone while muted");
@@ -620,7 +620,7 @@ pub(crate) async fn call(
                                         open.set_muted(false);
                                         Ok(open)
                                     }
-                                    None => open_discord_microphone(state, false, &reverse, &microphone, &track, &microphone_thread),
+                                    None => open_discord_microphone(state, false, &reverse, &microphone, &track, &microphone_thread, &hearing),
                                 };
                                 match opened {
                                     Ok(opened) => {
@@ -649,7 +649,7 @@ pub(crate) async fn call(
                             state.microphone = Some(id);
                             Chosen::write(remembered, state);
                             if capture.take().is_some() {
-                                match open_discord_microphone(state, state.muted, &reverse, &microphone, &track, &microphone_thread) {
+                                match open_discord_microphone(state, state.muted, &reverse, &microphone, &track, &microphone_thread, &hearing) {
                                     Ok(opened) => capture = Some(opened),
                                     Err(_) => {
                                         state.muted = true;
@@ -1102,6 +1102,8 @@ pub(crate) async fn call(
                     }
                 }
                 () = cameras.shown.notified() => {}
+                // Someone started or stopped speaking: the rings show it now.
+                () = hearing.speech_changed() => {}
                 _ = ticks.tick() => {}
             }
         }
@@ -1153,7 +1155,8 @@ fn open_discord_speakers(
 }
 
 /// Opens the chosen microphone, or the system default if it's gone;
-/// `muted`, for Hear Yourself alone.
+/// `muted`, for Hear Yourself alone. It wakes `hearing`'s call as it starts
+/// or stops sending.
 fn open_discord_microphone(
     state: &State,
     muted: bool,
@@ -1161,6 +1164,7 @@ fn open_discord_microphone(
     microphone: &yapfast_discord::voice::Microphone,
     track: &yapfast_discord::voice::Track,
     thread: &discord_audio::MicrophoneThread,
+    hearing: &Hearing,
 ) -> Result<Capture> {
     let open = |id: Option<&str>| {
         discord_audio::capture(
@@ -1169,6 +1173,7 @@ fn open_discord_microphone(
             reverse.clone(),
             microphone.clone(),
             track.clone(),
+            hearing.speech(),
             muted,
         )
     };
