@@ -49,6 +49,7 @@ impl App {
                 .as_ref()
                 .is_some_and(|tray| tray.available()),
             sign_in: &self.sign_in,
+            gate: &self.gate,
             lanes: crate::timeline::lanes(self),
             link_spot: &self.link_spot,
             profiles: &self.profiles,

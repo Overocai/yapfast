@@ -445,8 +445,12 @@ pub fn update(app: &mut App, event: Event) -> Task<Message> {
 /// unmutes or deafens as it connects, as the next one should, a call
 /// rings while one does, and the frames follow what shows.
 pub fn call_sync(app: &mut App) {
-    for sound in app.client.take_sounds() {
-        play(app, sound);
+    let sounds = app.client.take_sounds();
+    // A locked window plays none (`keygate.rs`).
+    if app.gate.open() {
+        for sound in sounds {
+            play(app, sound);
+        }
     }
     let voice = &app.client.state().voice;
     let watching = voice

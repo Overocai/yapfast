@@ -41,6 +41,8 @@ pub enum Message {
     /// prompt.
     SignIn(signin::Event),
     Mfa(mfa::Event),
+    /// The key that unlocks this build (`keygate.rs`).
+    Gate(crate::keygate::Event),
     /// A command from the test display's control file.
     Control(String),
     /// The timeline: its scrolling, its rows and what's done on them

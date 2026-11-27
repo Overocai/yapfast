@@ -52,6 +52,8 @@ pub struct Ctx<'a> {
     /// Linking Discord's form, which the sign-in screen and Settings'
     /// Discord page show.
     pub sign_in: &'a crate::signin::SignIn,
+    /// The key that unlocks this build (`keygate.rs`).
+    pub gate: &'a crate::keygate::Gate,
     /// The channel's timeline and the thread's: their rows' looks and the
     /// selection, which message text draws itself with.
     pub lanes: crate::timeline::Lanes<'a>,

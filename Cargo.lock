@@ -10949,6 +10949,7 @@ dependencies = [
  "iced_test",
  "iced_tiny_skia",
  "image",
+ "keyring",
  "png",
  "pulldown-cmark",
  "qrcode",

@@ -1,5 +1,6 @@
 //! My Account: this account's card with its profile and status, reconnect
-//! and sign out; and what the account's buttons do, the blocked list's
+//! and sign out, and in a build with a key server the key and its invite
+//! (`keygate.rs`); and what the account's buttons do, the blocked list's
 //! Show more among them.
 
 use iced::{
@@ -152,6 +153,9 @@ impl<'a> Page<'a> {
         };
         buttons.push(sign_out.into());
         parts.push(form::buttons(buttons));
+        if let Some(key) = crate::keygate::account(&self.cx) {
+            parts.push(key);
+        }
         form::page(parts)
     }
 }

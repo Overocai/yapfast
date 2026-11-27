@@ -3,12 +3,22 @@
 # or the Arch package: they're the run's artifacts (Actions > the run >
 # Artifacts > windows, linux). Beside them, Clippy checks the workspace and
 # the unit tests of the code the branch changes run on Linux.
+#
+# A build checks keys with the key server the YAPFAST_KEYS_URL variable names
+# (Settings > Secrets and variables > Actions > Variables), or the one a run
+# started by hand names; without one, it opens without a key. The Windows ZIP
+# carries the build's source code beside yapfast.exe (SOURCE.txt).
 name: Overocai build
 
 on:
   push:
     branches: [overocai]
   workflow_dispatch:
+    inputs:
+      keys_url:
+        description: "Key server this build checks keys with (empty: the YAPFAST_KEYS_URL variable)"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -39,7 +49,9 @@ jobs:
           cache-on-failure: true
       # Above 0.4.1, so the updater offers only a newer stable release.
       - run: scripts/set-version "0.5.0-overocai.${{ github.run_number }}"
-      - run: nix develop path:./nix#windows --command scripts/build-windows discord --no-installer
+      - run: nix develop path:./nix#windows --command scripts/build-windows discord --no-installer --bundle-source
+        env:
+          YAPFAST_KEYS_URL: ${{ inputs.keys_url || vars.YAPFAST_KEYS_URL }}
       - uses: actions/upload-artifact@v4
         with:
           name: windows
@@ -66,6 +78,8 @@ jobs:
       - name: Fetch the toolchain and crates
         run: nix develop path:./nix --command cargo fetch --locked
       - run: scripts/build-appimage
+        env:
+          YAPFAST_KEYS_URL: ${{ inputs.keys_url || vars.YAPFAST_KEYS_URL }}
       - uses: actions/upload-artifact@v4
         with:
           name: linux
@@ -95,3 +109,5 @@ jobs:
           nix develop path:./nix --command cargo test --locked --profile fast -p yapfast-core --lib -- discord_audio::tests:: keybinds::tests:: own_profile::tests:: application::tests::profile_editor application::tests::media application::tests::timeline voice_message::tests::
           nix develop path:./nix --command cargo test --locked --profile fast -p yapfast-iced-kit --lib -- pan::tests::
           nix develop path:./nix --command cargo test --locked --profile fast -p yapfast-vst
+      - name: The key server's tests
+        run: python3 keys/test_yapfast_keys.py

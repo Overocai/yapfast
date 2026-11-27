@@ -20,6 +20,7 @@ How it works, one doc per part:
 | [People and sign-in](people.md) | The member list, profiles, friends, menus, linking an account |
 | [Calls](calls.md) | Voice channels, DM calls, cameras and streams |
 | [Settings](settings.md) | The account's settings |
+| [The key gate](keys.md) | The key a build with a key server asks for, its checks, and its invite |
 | [Server and channel settings](server-settings.md) | A server's and a channel's settings |
 | [Dialogs](dialogs.md) | Questions, forms and their frames |
 

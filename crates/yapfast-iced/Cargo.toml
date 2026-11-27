@@ -55,6 +55,8 @@ emojis = "0.9"
 # The theme layout.json names, and the person's own themes there.
 serde.workspace = true
 serde_json.workspace = true
+# The key that unlocks a build with a key server, kept beside the Discord token.
+keyring.workspace = true
 # The code Discord's phone app scans to link an account.
 qrcode = { version = "0.14", default-features = false }
 # Opens pages where neither xdg-open nor gio is installed.

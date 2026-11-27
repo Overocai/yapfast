@@ -28,6 +28,10 @@ impl App {
     pub fn view(&self) -> Element<'_, Message> {
         // Whatever this returns, what it no longer shows goes at its end.
         let _viewing = self.win.pictures.view();
+        // The key comes first, before the sign-in screen (`keygate.rs`).
+        if !self.gate.open() {
+            return self.frame_layers(crate::keygate::view(self));
+        }
         if !crate::signin::workspace(self) {
             return self.frame_layers(crate::signin::view(self.ctx()));
         }
@@ -751,7 +755,8 @@ impl App {
     /// what it asks the person to judge.
     pub fn protected(&self) -> bool {
         let state = self.client.state();
-        !crate::signin::workspace(self)
+        !self.gate.open()
+            || !crate::signin::workspace(self)
             || self.leaving.is_some()
             || state.oauth.is_some()
             || state.gift.is_some()

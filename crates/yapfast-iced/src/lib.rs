@@ -114,6 +114,7 @@ mod signin;
 mod status;
 use yapfast_iced_kit::style;
 mod keybinds;
+mod keygate;
 mod shortcuts;
 mod suggest;
 mod switcher;
@@ -254,14 +255,24 @@ pub fn run(
     EXECUTOR
         .set(runtime.block_on(async { tokio::runtime::Handle::current() }))
         .ok();
-    // It starts on the preview, a saved session, or the sign-in screen.
+    // It starts on the preview, a saved session, or the sign-in screen;
+    // with a key server, only once the key is checked (`keygate.rs`).
     let restore = !options.preview && yapfast_core::chat::can_restore(&root);
     let mut client = Client::new(runtime, root);
-    if options.preview {
-        client.dispatch(Action::Preview);
+    let first = if options.preview {
+        Some(Action::Preview)
     } else if restore {
-        client.dispatch(Action::Restore);
-    }
+        Some(Action::Restore)
+    } else {
+        None
+    };
+    let held = match first {
+        Some(action) if keygate::server().is_none() => {
+            client.dispatch(action);
+            None
+        }
+        first => first,
+    };
     let test_size = test_size();
     let size = test_size.unwrap_or(SIZE);
     // iced calls `boot` once; the client goes into the window then. It runs
@@ -277,15 +288,17 @@ pub fn run(
         gpu_failed: plan.failed,
         fixed_size: test_size.is_some(),
     };
-    let client = RefCell::new(Some((client, start)));
+    let client = RefCell::new(Some((client, start, held)));
     let boot = move || {
-        let (client, start) = client
+        let (client, start, held) = client
             .borrow_mut()
             .take()
             .expect("iced boots the window once");
         let (mut app, task) = App::new(client, size);
         let shell = app.start_shell(start);
-        (app, Task::batch([task, shell]))
+        app.gate.held = held;
+        let gate = keygate::start(&mut app);
+        (app, Task::batch([task, shell, gate]))
     };
     tracing::info!(
         background = options.background,

@@ -93,6 +93,8 @@ def main():
                         help="the features the executable was built with (default: discord)")
     parser.add_argument("--output", type=Path, help="default: target/dist/FLAVOUR")
     parser.add_argument("--no-installer", action="store_true", help="make only the portable ZIP")
+    parser.add_argument("--bundle-source", action="store_true",
+                        help="put the source snapshot in the ZIP beside yapfast.exe, as SOURCE.txt says")
     args = parser.parse_args()
     flavour = FLAVOURS[args.flavour]
     output = args.output or ROOT / "target/dist" / args.flavour
@@ -140,17 +142,40 @@ def main():
         package.mkdir()
         shutil.copy2(executable, package / "yapfast.exe")
         shutil.copy2(ROOT / "LICENSE", package / "LICENSE.txt")
-        # The source snapshot goes beside the packages, on the release page,
-        # rather than into every install; SOURCE.txt says where.
-        source_url = f"https://github.com/yapfast/yapfast/releases/tag/v{version}{flavour['suffix']}"
-        (package / "SOURCE.txt").write_text(
-            f"The source code of this build of Yapfast {version}"
-            + (", with the exact source of\nthe libraries it includes under the AGPL," if rtc else "")
-            + " is published with it:\n\n"
-            f"  {source_url}\n  {source_path.name}, SHA-256 in BUILD.json\n\n"
-            "and in the repository, https://github.com/yapfast/yapfast. The licenses folder\n"
-            "holds every dependency's own license and notices.\n",
-            encoding="utf-8", newline="\r\n",
+        if args.bundle_source:
+            # A build passed on from a private repository carries its own
+            # source, as the GPL asks of whoever passes it on.
+            shutil.copy2(source_path, package / source_path.name)
+            (package / "SOURCE.txt").write_text(
+                f"The complete source code of this build of Yapfast {version}, the exact\n"
+                f"source it was built from, is {source_path.name}, in this folder\n"
+                "beside yapfast.exe; its SHA-256 is in BUILD.json. Keep it with the build:\n"
+                "whoever receives this build receives its source too, under the GNU General\n"
+                "Public License in LICENSE.txt. The licenses folder holds every\n"
+                "dependency's own license and notices.\n",
+                encoding="utf-8", newline="\r\n",
+            )
+            source_note = f"included; this build's complete source code is {source_path.name}.\n"
+        else:
+            # The source snapshot goes beside the packages, on the release
+            # page, rather than into every install; SOURCE.txt says where.
+            source_url = f"https://github.com/yapfast/yapfast/releases/tag/v{version}{flavour['suffix']}"
+            (package / "SOURCE.txt").write_text(
+                f"The source code of this build of Yapfast {version}"
+                + (", with the exact source of\nthe libraries it includes under the AGPL," if rtc else "")
+                + " is published with it:\n\n"
+                f"  {source_url}\n  {source_path.name}, SHA-256 in BUILD.json\n\n"
+                "and in the repository, https://github.com/yapfast/yapfast. The licenses folder\n"
+                "holds every dependency's own license and notices.\n",
+                encoding="utf-8", newline="\r\n",
+            )
+            source_note = "included; SOURCE.txt says where this build's source code is published.\n"
+        # The key server the build checks keys with (keygate.rs), if any.
+        keys_server = os.environ.get("YAPFAST_KEYS_URL", "").strip()
+        key_step = (
+            "   The first time, enter the key you were given: Windows keeps it in\n"
+            "   Credential Manager, and Yapfast checks it online as it opens.\n"
+            if keys_server else ""
         )
         if args.flavour == "discord":
             first_steps = (
@@ -181,7 +206,7 @@ def main():
             f"Yapfast{edition} for 64-bit Windows 10/11\n\n"
             "1. Extract the entire ZIP to a folder.\n"
             "2. Double-click yapfast.exe.\n"
-            + first_steps +
+            + key_step + first_steps +
             "No Rust, Visual Studio, or separate app installation is required.\n"
             "Yapfast writes diagnostics to yapfast.log in its data folder,\n"
             "%LOCALAPPDATA%\\Yapfast\\Yapfast\\data, or to the console run-yapfast.cmd opens.\n"
@@ -195,7 +220,7 @@ def main():
             + renderer_note +
             "Yapfast is free software under the GNU General Public License, version 3\n"
             "or later, in LICENSE.txt. Dependency notices and original licenses are\n"
-            "included; SOURCE.txt says where this build's source code is published.\n",
+            + source_note,
             encoding="utf-8",
         )
         (package / "run-yapfast.cmd").write_text(
@@ -220,6 +245,8 @@ def main():
             "webrtc_tag": "webrtc-51ef663",
             "webrtc_archive_sha256": "0a56a5c91b3b7b4222082b8a09388d16a802cde22d67295beb24c55700755b30",
         }
+        if keys_server:
+            build["keys_server"] = keys_server
         if rtc:
             build["homeserver_default"] = "https://matrix.org"
         (package / "BUILD.json").write_text(json.dumps(build, indent=2) + "\n", encoding="utf-8")

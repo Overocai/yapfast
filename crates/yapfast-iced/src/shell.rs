@@ -806,8 +806,12 @@ impl App {
                 .discard(),
             );
         }
-        for alert in self.client.take_alerts() {
-            tasks.push(self.alert(alert));
+        let alerts = self.client.take_alerts();
+        // A locked window tells of nothing (`keygate.rs`).
+        if self.gate.open() {
+            for alert in alerts {
+                tasks.push(self.alert(alert));
+            }
         }
         if let Some(bytes) = self.client.take_copied_picture() {
             desktop::desktop().copy_picture(bytes);

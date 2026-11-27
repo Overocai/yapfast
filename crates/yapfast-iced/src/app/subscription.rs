@@ -220,6 +220,11 @@ impl App {
                     .map(Message::Control),
             );
         }
+        // The key's check every minute (`keygate.rs`).
+        if let Some(every) = self.gate.every() {
+            subscriptions
+                .push(iced::time::every(every).map(|_| Message::Gate(crate::keygate::Event::Tick)));
+        }
         Subscription::batch(subscriptions)
     }
 }
