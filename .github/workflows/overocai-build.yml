@@ -48,7 +48,7 @@ jobs:
         with:
           cache-on-failure: true
       # Above 0.4.1, so the updater offers only a newer stable release.
-      - run: scripts/set-version "0.5.0-overocai.${{ github.run_number }}"
+      - run: scripts/set-version "1.5.0"
       - run: nix develop path:./nix#windows --command scripts/build-windows discord --no-installer --bundle-source
         env:
           YAPFAST_KEYS_URL: ${{ inputs.keys_url || vars.YAPFAST_KEYS_URL }}
@@ -72,7 +72,7 @@ jobs:
       - uses: cachix/install-nix-action@v31
         with:
           github_access_token: ${{ github.token }}
-      - run: scripts/set-version "0.5.0-overocai.${{ github.run_number }}"
+      - run: scripts/set-version "1.5.0"
       # A fresh runner installs Rust and fetches the crates for longer than
       # scripts/package-linux.py gives cargo metadata.
       - name: Fetch the toolchain and crates
