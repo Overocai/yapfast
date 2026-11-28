@@ -598,7 +598,8 @@ def autostart(args) -> int:
         "$s.TargetPath = $env:YK_PROGRAM; $s.Arguments = $env:YK_ARGUMENTS;"
         "$s.WorkingDirectory = $env:YK_FOLDER; $s.WindowStyle = 7; $s.Save()"
     )
-    arguments = f'"{script}" serve' + (f' --data "{args.data}"' if args.data else "")
+    # The folder goes before the command, as the parser takes it.
+    arguments = f'"{script}"' + (f' --data "{args.data}"' if args.data else "") + " serve"
     environment = dict(os.environ, YK_LINK=str(shortcut), YK_PROGRAM=str(program),
                        YK_ARGUMENTS=arguments, YK_FOLDER=str(script.parent))
     subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", command],
